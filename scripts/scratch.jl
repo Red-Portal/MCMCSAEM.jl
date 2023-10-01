@@ -39,24 +39,33 @@ function main()
     y_train_cent = @. (y_train - μ_y_train) / σ_y_train
     prob         = BNN(X_train, y_train_cent, 50)
 
-    batchsize    = 30
-    n_samples    = 10
+    batchsize = 32 #length(y_train)
+    n_samples = 10
 
-    advi       = ADVI(prob, n_samples)
-    advidoubly = Subsampling(advi, batchsize, 1:length(y_train))
+    #objective = ADVI(prob, n_samples)
+    #objective = Reshuffling(objective, batchsize, 1:length(y_train))
 
-    d     = LogDensityProblems.dimension(prob)
+    objective = MCSA(prob, n_samples, 5f-3, 1:length(y_train), batchsize)
+
+
+    d = LogDensityProblems.dimension(prob)
 
     @info("", d = d)
 
     #q     = StructuredLocationScale(prob; use_cuda)
 
     q     = VIMeanFieldGaussian(zeros(Float32, d), Diagonal(ones(Float32, d)))
+    #q     = VIFullRankGaussian(zeros(Float32, d), LowerTriangular(Matrix{Float32}(I, d, d)))
     #q     = VIMeanFieldGaussian(CUDA.zeros(Float32, d), Diagonal(.1f0*CUDA.ones(Float32, d)))
     λ, re = Optimisers.destructure(q)
 
-    callback!(; λ, args...) = begin
+    n_max_iter = 10^3
+    z_hist = zeros(d, n_max_iter)
+
+    callback!(; stat, obj_st, λ, args...) = begin
         q = re(λ)
+
+        rng, z_chains = obj_st
 
         bnn_locat = prob.restruct(q.location)
         bnn_scale = prob.restruct(diag(q.scale))
@@ -76,20 +85,27 @@ function main()
         if any(@. isnan(λ) | isinf(λ))
             throw(ErrorException("NaN detected"))
         end
+
+        z_hist[:,stat.iteration] = z_chains[:,1]
+
         (lpd=lpd, rmse=rmse,)
     end
 
-    n_max_iter = 10^4
     q, stats, _ = optimize(
-        advidoubly,
+        objective,
         q,
         n_max_iter;
         callback! = callback!,
         rng       = rng,
         adbackend = ADTypes.AutoZygote(),
-        optimizer = Optimisers.Adam(1f-3)
+        optimizer = Optimisers.Adam(1f-2)
+        #optimizer = Optimisers.AdaGrad(1f-1)
     )
+
+    Plots.plot(z_hist[1:10,:]') |> display
+    return
+
     elbo = [stat.lpd for stat ∈ stats]
-    plot(elbo, ylims=quantile(elbo, (0.1, 1.))) |> display
+    plot(elbo, ylims=quantile(elbo, (0., 1.))) |> display
     q
 end

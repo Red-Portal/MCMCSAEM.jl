@@ -14,6 +14,9 @@ function prepare_dataset(rng::Random.AbstractRNG,
     x_test  = data_x[n_train+1:end, :]
     y_test  = data_y[n_train+1:end]
 
+    y_train    = Array{Float32}(y_train)
+    y_test     = Array{Float32}(y_test)
+
     X_train    = Array{Float32}(x_train')
     X_test     = Array{Float32}(x_test')
     μ_X        = mean(X_train, dims=2)[:,1]
