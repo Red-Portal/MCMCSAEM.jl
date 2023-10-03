@@ -4,6 +4,8 @@ using DrWatson
 
 using ADTypes
 using Accessors
+using Bootstrap
+using DataFrames, DataFramesMeta
 using Distributions
 using FillArrays 
 using LogDensityProblems
@@ -17,6 +19,7 @@ using Statistics
 using StatsFuns
 using Tullio
 using HDF5
+using JLD2
 
 using MCMCSAEM
 

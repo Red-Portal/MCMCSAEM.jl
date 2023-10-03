@@ -29,14 +29,14 @@ function MCMCSAEM.project(::LogisticARD, θ::AbstractVector)
     @. clamp(θ, 1e-3, Inf)
 end
 
-function dataset(::Val{:colon})
+function load_dataset(::Val{:colon})
     mat  = MAT.matread(datadir("dataset", "colon.mat"))
     X, y = Array(mat["X"]), mat["Y"][:,1]
     y    = y .== 1.0
     X, y
 end
 
-function dataset(::Val{:leukemia})
+function load_dataset(::Val{:leukemia})
     mat  = MAT.matread(datadir("dataset", "leukemia.mat"))
     X, y = Array(mat["X"]), mat["Y"][:,1]
     X = X .- mean(X, dims=1)
@@ -45,7 +45,7 @@ function dataset(::Val{:leukemia})
     X, y
 end
 
-function dataset(::Val{:prostate})
+function load_dataset(::Val{:prostate})
     mat  = MAT.matread(datadir("dataset", "prostate.mat"))
     X, y = Array(mat["X"]), mat["Y"][:,1]
     X = X .- mean(X, dims=1)
@@ -54,13 +54,13 @@ function dataset(::Val{:prostate})
     X, y
 end
 
-function main(::Val{:logisticard}, key=1)
+function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, key)
     ad   = ADTypes.AutoReverseDiff()
 
-    X, y = dataset(Val(:prostate))
+    X, y = load_dataset(dataset)
 
     X_train, y_train, X_test, y_test =  prepare_dataset(rng, X, y)
 
@@ -70,7 +70,6 @@ function main(::Val{:logisticard}, key=1)
     T         = 1000
     γ₀        = 1e-0
     γ         = t -> γ₀ / t
-    h         = 1e-4
     m         = 1    # n_chains
 
     model = LogisticARD(X_train, y_train)
@@ -87,7 +86,7 @@ function main(::Val{:logisticard}, key=1)
     end
 
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!)
-    Plots.plot!(1 ./ θ) |> display
+    #Plots.plot!(1 ./ θ) |> display
     #Plots.plot(V_hist)
 
     # model_sel = LogisticARD(X_train[:,select_idx], y_train)
@@ -105,37 +104,68 @@ function main(::Val{:logisticard}, key=1)
     logits = X_test*β_post
     p_test = mean(logistic.(logits), dims=2)[:,1]
 
-    @info("",
-        acc   = mean((p_test .> 0.5) .== y_test),
-        mlpd1 = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test),
-    )
+    acc  = mean((p_test .> 0.5) .== y_test)
+    mlpd = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test)
 
+    DataFrame(acc=acc, mlpd=mlpd)
 end
 
-# struct MyNormal{Dist}
-#     d::Dist
-# end
+function main(::Val{:logisticard})
+    n_trials = 32
+    datasets = [
+        (dataset = :colon,),
+        (dataset = :prostate,),
+        (dataset = :leukemia,)
+    ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-6, -2, length=11) ]
 
-# function LogDensityProblems.capabilities(::Type{<:LogisticARD})
-#     LogDensityProblems.LogDensityOrder{0}()
-# end
+    configs = Iterators.product(datasets, stepsizes) |> collect
+    configs = reshape(configs, :)
+    configs = map(x -> merge(x...), configs)
 
-# function LogDensityProblems.logdensity(
-#     model::MyNormal, β::AbstractVector, θ::AbstractVector
-# )
-#     logpdf(model.d, β)
-# end
+    data = @showprogress mapreduce(vcat, configs) do config
+        SimpleUnPack.@unpack stepsize, dataset = config
+        dfs = @showprogress pmap(1:n_trials) do key
+            run(Val(:logisticard), Val(dataset), stepsize, key, false)
+        end
+        df = vcat(dfs...)
+        for (k, v) ∈ pairs(config)
+            df[:,k] .= v
+        end
+        GC.gc()
+        df
+    end
 
-# function main()
-#     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
-#     rng  = Philox4x(UInt64, seed, 8)
-#     set_counter!(rng, 1)
-#     ad   = ADTypes.AutoReverseDiff()
+    JLD2.save(datadir("exp_pro", "logisticard_accuracy.jld2"), "data", data)
 
-#     μ     = randn(4)
-#     σ     = [.1, .2, .3, .4]
-#     model = MyNormal(MvNormal(μ, σ))
+    function run_bootstrap(data′)
+        boot = bootstrap(mean, data′, BalancedSampling(1024))
+        confint(boot, PercentileConfInt(0.8)) |> only
+    end
 
-#     x = MCMCSAEM.mcmc(rng, model, [], randn(4), 3e-1, 10000; ad)
-#     μ, x
-# end
+    h5open(datadir("exp_pro", "logisticard_accuracy.h5"), "w") do h5
+        for dataset ∈ [:colon, :leukemia, :prostate]
+            data′ = data[data[:,:dataset] .== dataset,:]
+            data′′ = @chain groupby(data′, :stepsize) begin
+                @combine(:acc_ci    = run_bootstrap(:acc),
+                         :mlpd_ci   = run_bootstrap(:mlpd))
+            end
+            h  = data′′[:,:stepsize]
+            
+            acc      = data′′[:,:acc_ci]
+            acc_mean = [accᵢ[1] for accᵢ ∈ acc]
+            acc_p    = [abs(accᵢ[2] - accᵢ[1]) for accᵢ ∈ acc]
+            acc_m    = [abs(accᵢ[3] - accᵢ[1]) for accᵢ ∈ acc]
+            
+            mlpd      = data′′[:,:mlpd_ci]
+            mlpd_mean = [mlpdᵢ[1] for mlpdᵢ ∈ mlpd]
+            mlpd_p    = [abs(mlpdᵢ[2] - mlpdᵢ[1]) for mlpdᵢ ∈ acc]
+            mlpd_m    = [abs(mlpdᵢ[3] - mlpdᵢ[1]) for mlpdᵢ ∈ acc]
+
+            write(h5, "h_$(dataset)",    h)
+            write(h5, "acc_$(dataset)",  hcat( acc_mean,  acc_p,  acc_m)' |> Array)
+            write(h5, "mlpd_$(dataset)", hcat(mlpd_mean, mlpd_p, mlpd_m)' |> Array)
+        end
+    end
+    data
+end
