@@ -17,6 +17,7 @@ function LogDensityProblems.logdensity(
     d = size(X,2)
     σ = 1 ./ θ
     s = X*β[2:end] .+ β[1]
+
     ℓp_x = mapreduce(+, s, y) do sᵢ, yᵢ
         logpdf(BernoulliLogit(sᵢ), yᵢ)
     end
@@ -85,7 +86,7 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
         nothing
     end
 
-    θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!)
+    θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!, show_progress)
     #Plots.plot!(1 ./ θ) |> display
     #Plots.plot(V_hist)
 
@@ -98,7 +99,7 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
 
     θ = mean(θ_hist, dims=2)[:,1]
 
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 2000; ad)
+    β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 2000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
     logits = X_test*β_post

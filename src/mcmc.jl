@@ -83,10 +83,11 @@ function mcmc(rng    ::Random.AbstractRNG,
               h₀     ::Real,
               T      ::Integer,
               T_adapt::Integer = div(T,2);
-              ad     ::ADTypes.AbstractADType = ADTypes.AutoZygote)
+              ad     ::ADTypes.AbstractADType = ADTypes.AutoZygote,
+              show_progress = true)
     x      = x₀ isa Vector ? reshape(x₀, (:,1)) : copy(x₀)
     ∇ℓ_buf = DiffResults.DiffResult(zero(eltype(x)), similar(x, size(x, 1)))
-    prog   = Progress(T)
+    prog   = Progress(T; enabled=show_progress, showspeed=true)
     x_post = similar(x₀, size(x₀,1), T - T_adapt)
     acc    = 0
 
