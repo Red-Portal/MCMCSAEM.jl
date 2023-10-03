@@ -4,6 +4,7 @@ module MCMCSAEM
 using ADTypes
 using DiffResults
 using Distributions
+using LinearAlgebra
 using LogDensityProblems
 using ProgressMeter
 using Random
@@ -18,5 +19,6 @@ function project end
 
 include("gradient.jl")
 include("mcmcsaem.jl")
+include("mcmc.jl")
 
 end
