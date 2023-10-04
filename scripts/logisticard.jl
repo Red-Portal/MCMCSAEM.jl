@@ -169,13 +169,14 @@ function main(::Val{:logisticard})
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize, dataset = config
         dfs = @showprogress pmap(1:n_trials) do key
-            run(Val(:logisticard), Val(dataset), stepsize, key, false)
+            out = run(Val(:logisticard), Val(dataset), stepsize, key, false)
+            GC.gc()
+            out
         end
         df = vcat(dfs...)
         for (k, v) ∈ pairs(config)
             df[:,k] .= v
         end
-        GC.gc()
         df
     end
 
