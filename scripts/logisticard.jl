@@ -106,13 +106,13 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     d = size(X_train, 2)
 
     T_burn    = 500
-    T         = 1000
-    γ₀        = 1e-0 #1e-0
-    γ         = t -> γ₀ / t
+    T         = 5000
+    γ₀        = 1e-1
+    γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
 
     model = LogisticARD(X_train, y_train)
-    σ₀    = 0.1
+    σ₀    = 0.3
     θ₀    = fill(1/σ₀, d)
     x₀    = σ₀*randn(rng, d+1, m)
 
@@ -125,8 +125,10 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     end
 
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!, show_progress)
-    #Plots.plot!(1 ./ θ) |> display
-    #Plots.plot(V_hist)
+    #Plots.plot(log.(θ)) |> display
+    #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
+    #Plots.plot(V_hist) |> display
+    #throw()
 
     # model_sel = LogisticARD(X_train[:,select_idx], y_train)
     # θ_sel     = θ[select_idx]
@@ -140,13 +142,15 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 2000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
-    logits = X_test*β_post
-    p_test = mean(logistic.(logits), dims=2)[:,1]
+    p_test_samples = logistic.(X_test*β_post)
+    p_test         = map(eachrow(p_test_samples)) do p_testᵢ
+        y_predᵢ = vcat((@. rand(rng, Bernoulli(p_testᵢ), 100))...)
+        mean(y_predᵢ)
+    end
+    acc = mean((p_test .> 0.5) .== y_test)
+    lpd = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test)
 
-    acc  = mean((p_test .> 0.5) .== y_test)
-    mlpd = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test)
-
-    DataFrame(acc=acc, mlpd=mlpd)
+    DataFrame(acc=acc, lpd=lpd)
 end
 
 function main(::Val{:logisticard})
@@ -182,7 +186,7 @@ function main(::Val{:logisticard})
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
                 @combine(:acc_ci    = run_bootstrap(:acc),
-                         :mlpd_ci   = run_bootstrap(:mlpd))
+                         :lpd_ci   = run_bootstrap(:lpd))
             end
             h  = data′′[:,:stepsize]
             
@@ -191,14 +195,14 @@ function main(::Val{:logisticard})
             acc_p    = [abs(accᵢ[2] - accᵢ[1]) for accᵢ ∈ acc]
             acc_m    = [abs(accᵢ[3] - accᵢ[1]) for accᵢ ∈ acc]
             
-            mlpd      = data′′[:,:mlpd_ci]
-            mlpd_mean = [mlpdᵢ[1] for mlpdᵢ ∈ mlpd]
-            mlpd_p    = [abs(mlpdᵢ[2] - mlpdᵢ[1]) for mlpdᵢ ∈ acc]
-            mlpd_m    = [abs(mlpdᵢ[3] - mlpdᵢ[1]) for mlpdᵢ ∈ acc]
+            lpd      = data′′[:,:lpd_ci]
+            lpd_mean = [lpdᵢ[1] for lpdᵢ ∈ lpd]
+            lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ acc]
+            lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ acc]
 
-            write(h5, "h_$(dataset)",    h)
-            write(h5, "acc_$(dataset)",  hcat( acc_mean,  acc_p,  acc_m)' |> Array)
-            write(h5, "mlpd_$(dataset)", hcat(mlpd_mean, mlpd_p, mlpd_m)' |> Array)
+            write(h5, "h_$(dataset)",   h)
+            write(h5, "acc_$(dataset)", hcat(acc_mean, acc_p, acc_m)' |> Array)
+            write(h5, "lpd_$(dataset)", hcat(lpd_mean, lpd_p, lpd_m)' |> Array)
         end
     end
     data
