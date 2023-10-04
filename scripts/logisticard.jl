@@ -1,6 +1,8 @@
 
 include("common.jl")
 
+using GLMNet
+
 struct LogisticARD{Mat <: AbstractMatrix, Vec <: AbstractVector}
     X::Mat
     y::Vec
@@ -40,19 +42,55 @@ end
 function load_dataset(::Val{:leukemia})
     mat  = MAT.matread(datadir("dataset", "leukemia.mat"))
     X, y = Array(mat["X"]), mat["Y"][:,1]
-    X = X .- mean(X, dims=1)
-    X = X ./ std(X, dims=1)
-    y = y .== 1.0
+    y    = y .== 1.0
     X, y
 end
 
 function load_dataset(::Val{:prostate})
     mat  = MAT.matread(datadir("dataset", "prostate.mat"))
     X, y = Array(mat["X"]), mat["Y"][:,1]
-    X = X .- mean(X, dims=1)
-    X = X ./ std(X, dims=1)
-    y = y .== 2.0
+    y    = y .== 2.0
     X, y
+end
+
+function lasso(dataset, key=1)
+    seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
+    rng  = Philox4x(UInt64, seed, 8)
+    set_counter!(rng, key)
+
+    X, y = load_dataset(dataset)
+
+    X_train, y_train, X_test, y_test = prepare_dataset(rng, X, y; ratio=0.8)
+
+    y_glm_train = hcat(Int.(.!y_train), Int.(y_train))
+    glm         = glmnetcv(X_train, y_glm_train, Binomial();
+                           intercept=true, grouped=false) 
+    
+    p_test = predict(glm, X_test, outtype=:prob)
+    acc    = mean((p_test .> 0.5) .== y_test)
+
+    mlpd   = mean(map((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), p_test, y_test))
+    acc, mlpd
+end
+
+function run_bootstrap(data′)
+    boot = bootstrap(mean, data′, BalancedSampling(1024))
+    confint(boot, PercentileConfInt(0.8)) |> only
+end
+
+function run_lass_dataset(dataset)
+    n_trials = 32
+    mlpd     = map(1:n_trials) do key
+        lasso(dataset, key)[2]
+    end
+    ci = run_bootstrap(mlpd)
+    @info("", dataset, mean = ci[1], Δci = (abs(ci[2] - ci[1]), abs(ci[3] - ci[1])))
+end
+
+function run_lasso_all()
+    run_lass_dataset(Val(:colon))
+    run_lass_dataset(Val(:prostate))
+    run_lass_dataset(Val(:leukemia))
 end
 
 function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
@@ -63,13 +101,13 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
 
     X, y = load_dataset(dataset)
 
-    X_train, y_train, X_test, y_test =  prepare_dataset(rng, X, y)
+    X_train, y_train, X_test, y_test =  prepare_dataset(rng, X, y; ratio=0.8)
 
     d = size(X_train, 2)
 
     T_burn    = 500
     T         = 1000
-    γ₀        = 1e-0
+    γ₀        = 1e-0 #1e-0
     γ         = t -> γ₀ / t
     m         = 1    # n_chains
 
@@ -138,11 +176,6 @@ function main(::Val{:logisticard})
     end
 
     JLD2.save(datadir("exp_pro", "logisticard_accuracy.jld2"), "data", data)
-
-    function run_bootstrap(data′)
-        boot = bootstrap(mean, data′, BalancedSampling(1024))
-        confint(boot, PercentileConfInt(0.8)) |> only
-    end
 
     h5open(datadir("exp_pro", "logisticard_accuracy.h5"), "w") do h5
         for dataset ∈ [:colon, :leukemia, :prostate]
