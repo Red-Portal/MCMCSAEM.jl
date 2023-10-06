@@ -3,33 +3,35 @@ function ula_kernel(
     rng::Random.AbstractRNG,
     g,
     x  ::AbstractVector{F},
-    h  ::Real
+    h  ::Real,
+    P  = I
 ) where {F <: Real}
     d = length(x)
-    ξ = sqrt(h)*randn(rng, F, d)
-    x + h/2*g(x) + ξ
+    ξ = rand(rng, MvNormal(Zeros{F}(d), h*P))
+    x + h/2*P*g(x) + ξ
 end
 
 function mala_kernel(
     rng::Random.AbstractRNG,
     grad,
     x  ::AbstractVector{F},
-    h  ::Real
+    h  ::Real,
+    P = I
 ) where {F <: Real}
     out = grad(x)
     ∇ℓπ = DiffResults.gradient(out)
     ℓπ  = DiffResults.value(out)
 
-    μ  = x + h/2*∇ℓπ
-    q  = MvNormal(μ, sqrt(h))
+    μ  = x + h/2*P*∇ℓπ
+    q  = MvNormal(μ, h*P)
     x′  = rand(rng, q)
     ℓq′ = logpdf(q, x′)
 
     out′ = grad(x′)
     ∇ℓπ′ = DiffResults.gradient(out′)
     ℓπ′  = DiffResults.value(out′)
-    μ′   = x′ + h/2*∇ℓπ′
-    q′   = MvNormal(μ′, sqrt(h))
+    μ′   = x′ + h/2*P*∇ℓπ′
+    q′   = MvNormal(μ′, h*P)
     ℓq  = logpdf(q′, x)
 
     ℓα = min(0, (ℓπ′ - ℓπ) - (ℓq′ - ℓq))
@@ -52,9 +54,10 @@ function mcmc_transition!(
 )
     ℓ(x′)  = LogDensityProblems.logdensity(model, x′, θ)
     ∇ℓ(x′) = value_and_gradient!(ad, ℓ, x′, ∇ℓ_buf) |> DiffResults.gradient
+    P     = preconditioner(model, θ)
     xᵢ    = last(eachcol(x))
     for i = 1:size(x,2) 
-        xᵢ     = ula_kernel(rng, ∇ℓ, xᵢ, h)
+        xᵢ     = ula_kernel(rng, ∇ℓ, xᵢ, h, P)
         x[:,i] = xᵢ
     end
     x, 1.0
@@ -72,10 +75,11 @@ function mcmc_transition!(
 )
     ℓ(x′)  = LogDensityProblems.logdensity(model, x′, θ)
     ∇ℓ(x′) = value_and_gradient!(ad, ℓ, x′, ∇ℓ_buf)
+    P     = preconditioner(model, θ)
     acc   = 0
     xᵢ    = last(eachcol(x))
     for i = 1:size(x,2) 
-        xᵢ, α′  = mala_kernel(rng, ∇ℓ, xᵢ, h)
+        xᵢ, α′  = mala_kernel(rng, ∇ℓ, xᵢ, h, P)
         acc    += α′/size(x, 2)
         x[:,i]  = xᵢ
     end

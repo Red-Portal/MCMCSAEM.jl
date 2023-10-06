@@ -28,16 +28,21 @@ function LogDensityProblems.logdensity(
     ℓp_x + ℓp_β + ℓp_α
 end
 
-function MCMCSAEM.sufficient_statistic(::Logistic, x::AbstractMatrix)
-    mean(eachcol(x)) do xᵢ
+function MCMCSAEM.preconditioner(::LogisticARD, θ::AbstractVector)
+    Diagonal(vcat([0.1], (@. 1/θ^2 + 1e-7)))
+end
+
+function MCMCSAEM.sufficient_statistic(::LogisticARD, x::AbstractMatrix)
+    mean(eachcol(x[2:end,:])) do xᵢ
         xᵢ.^2
     end
 end
 
-function MCMCSAEM.maximize_surrogate(::Logistic, S::AbstractVector)
+function MCMCSAEM.maximize_surrogate(::LogisticARD, S::AbstractVector)
+    ϵ   = eps(eltype(S))
     EX² = S
-    σ²  = mean(EX², dims=2)[:,1]
-    1.0./σ²
+    σ²  = EX²
+    @. 1.0 / (sqrt(σ²) + ϵ)
 end
 
 function load_dataset(::Val{:colon})
@@ -96,7 +101,7 @@ function run_lasso_all()
     run_lasso_dataset(Val(:leukemia))
 end
 
-function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
+function run_problem(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, key)
@@ -108,14 +113,14 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
 
     d = size(X_train, 2)
 
-    T_burn    = 500
-    T         = 5000
-    γ₀        = 1e-1
+    T_burn    = 1000
+    T         = 100000
+    γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
 
     model = LogisticARD(X_train, y_train)
-    σ₀    = 0.3
+    σ₀    = 0.1
     θ₀    = fill(1/σ₀, d)
     x₀    = σ₀*randn(rng, d+1, m)
 
@@ -128,14 +133,14 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     end
 
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!, show_progress)
-    #Plots.plot(log.(θ)) |> display
+    Plots.plot!(1 ./ θ) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
     #Plots.plot(V_hist) |> display
     #throw()
 
-    θ = mean(θ_hist, dims=2)[:,1]
+    #θ = mean(θ_hist, dims=2)[:,1]
 
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 2000; ad, show_progress)
+    β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 5000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
     p_test_samples = logistic.(X_test*β_post)
@@ -145,6 +150,8 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     end
     acc = mean((p_test .> 0.5) .== y_test)
     lpd = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test)
+
+    GC.gc()
 
     DataFrame(acc=acc, lpd=lpd)
 end
@@ -156,7 +163,7 @@ function main(::Val{:logisticard})
         (dataset = :prostate,),
         (dataset = :leukemia,)
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-6, -2, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -2, length=11) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
@@ -165,9 +172,7 @@ function main(::Val{:logisticard})
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize, dataset = config
         dfs = @showprogress pmap(1:n_trials) do key
-            out = run(Val(:logisticard), Val(dataset), stepsize, key, false)
-            GC.gc()
-            out
+            run_problem(Val(:logisticard), Val(dataset), stepsize, key, false)
         end
         df = vcat(dfs...)
         for (k, v) ∈ pairs(config)

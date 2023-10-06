@@ -9,6 +9,7 @@ using DataFrames, DataFramesMeta
 using Distributions
 using FillArrays 
 using LogDensityProblems
+using LinearAlgebra
 using MAT
 using Plots, StatsPlots
 using ProgressMeter
