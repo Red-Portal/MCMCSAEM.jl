@@ -39,3 +39,8 @@ function prepare_dataset(rng   ::Random.AbstractRNG,
     y_test  = data_y[n_train+1:end]
     x_train, y_train, x_test, y_test
 end
+
+function run_bootstrap(data′)
+    boot = bootstrap(mean, data′, BalancedSampling(1024))
+    confint(boot, PercentileConfInt(0.8)) |> only
+end

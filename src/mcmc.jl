@@ -40,25 +40,30 @@ function mala_kernel(
     end
 end
 
-function ula_transition!(
+function mcmc_transition!(
     rng    ::Random.AbstractRNG,
     ad     ::ADTypes.AbstractADType,
+           ::Val{:ula},
     model,
-    xs     ::AbstractArray,
+    x      ::AbstractArray,
     θ      ::AbstractVector,
     h      ::Real,
     ∇ℓ_buf
 )
     ℓ(x′)  = LogDensityProblems.logdensity(model, x′, θ)
     ∇ℓ(x′) = value_and_gradient!(ad, ℓ, x′, ∇ℓ_buf) |> DiffResults.gradient
-    mapslices(xs, dims=1) do x′
-        ula_kernel(rng, ∇ℓ, x′, h)
+    xᵢ    = last(eachcol(x))
+    for i = 1:size(x,2) 
+        xᵢ     = ula_kernel(rng, ∇ℓ, xᵢ, h)
+        x[:,i] = xᵢ
     end
+    x, 1.0
 end
 
-function mala_transition!(
+function mcmc_transition!(
     rng    ::Random.AbstractRNG,
     ad     ::ADTypes.AbstractADType,
+           ::Val{:mala},
     model,
     x      ::AbstractArray,
     θ      ::AbstractVector,
@@ -67,11 +72,12 @@ function mala_transition!(
 )
     ℓ(x′)  = LogDensityProblems.logdensity(model, x′, θ)
     ∇ℓ(x′) = value_and_gradient!(ad, ℓ, x′, ∇ℓ_buf)
-    acc = 0
-    x = mapslices(x, dims=1) do x′
-        x′, α′ = mala_kernel(rng, ∇ℓ, x′, h)
-        acc  += α′/size(x, 2)
-        x′
+    acc   = 0
+    xᵢ    = last(eachcol(x))
+    for i = 1:size(x,2) 
+        xᵢ, α′  = mala_kernel(rng, ∇ℓ, xᵢ, h)
+        acc    += α′/size(x, 2)
+        x[:,i]  = xᵢ
     end
     x, acc
 end
@@ -82,47 +88,52 @@ function mcmc(rng    ::Random.AbstractRNG,
               x₀     ::AbstractArray,
               h₀     ::Real,
               T      ::Integer,
-              T_adapt::Integer = div(T,2);
-              ad     ::ADTypes.AbstractADType = ADTypes.AutoZygote,
+              T_adapt::Integer  = div(T,2);
+              mcmc_type::Symbol = :mala,
+              ad       ::ADTypes.AbstractADType = ADTypes.AutoZygote,
               show_progress = true)
     x      = x₀ isa Vector ? reshape(x₀, (:,1)) : copy(x₀)
     ∇ℓ_buf = DiffResults.DiffResult(zero(eltype(x)), similar(x, size(x, 1)))
     prog   = Progress(T; enabled=show_progress, showspeed=true)
     x_post = similar(x₀, size(x₀,1), T - T_adapt)
-    acc    = 0
 
-    # Nesterov Dual Averaging
-    H_dual = zeros(eltype(h₀), T_adapt)
-    γ_dual = 0.05
-    ℓh₀    = log(h₀)
-    ℓh_bar = ℓh₀
-    ℓh     = ℓh₀
+    if mcmc_type == :mala
+        # Nesterov Dual Averaging
+        acc    = 0
+        H_dual = zeros(eltype(h₀), T_adapt)
+        γ_dual = 0.05
+        ℓh₀    = log(h₀)
+        ℓh_bar = ℓh₀
+        ℓh     = ℓh₀
 
-    for t = 1:T_adapt
-        x, α = mala_transition!(rng, ad, model, x, θ, exp(ℓh), ∇ℓ_buf)
-
-        H_dual[t] = 0.47 - α
-        ℓh        = ℓh₀ - sqrt(t)/γ_dual/(t + 10)*sum(H_dual[1:t])
-        η         = 1/t^(0.5)
-        ℓh_bar    = η*ℓh + (1 - η)*ℓh_bar
-
-        acc = acc + (α - acc)/t
-
-        stats = (
-            t       = t,
-            loglike = DiffResults.value(∇ℓ_buf),
-            h       = exp(ℓh),
-            ℓh_bar  = exp(ℓh_bar),
-            acc     = acc,
-            state   = :adaptation,
-        )
-        pm_next!(prog, stats)
+        for t = 1:T_adapt
+            x, α = mcmc_transition!(
+                rng, ad, Val(mcmc_type), model, x, θ, exp(ℓh), ∇ℓ_buf
+            )
+            
+            H_dual[t] = 0.47 - α
+            ℓh        = ℓh₀ - sqrt(t)/γ_dual/(t + 10)*sum(H_dual[1:t])
+            η         = 1/t^(0.5)
+            ℓh_bar    = η*ℓh + (1 - η)*ℓh_bar
+            
+            acc = acc + (α - acc)/t
+            
+            stats = (
+                t       = t,
+                loglike = DiffResults.value(∇ℓ_buf),
+                h       = exp(ℓh),
+                ℓh_bar  = exp(ℓh_bar),
+                acc     = acc,
+                state   = :adaptation,
+            )
+            pm_next!(prog, stats)
+        end
     end
 
     acc   = 0
     h_bar = exp(ℓh_bar)
     for t = 1:T-T_adapt
-        x, α = mala_transition!(rng, ad, model, x, θ, h_bar, ∇ℓ_buf)
+        x, α = mcmc_transition!(rng, ad, Val(mcmc_type), model, x, θ, h_bar, ∇ℓ_buf)
 
         acc = acc + (α - acc)/t
         x_post[:,t] = x

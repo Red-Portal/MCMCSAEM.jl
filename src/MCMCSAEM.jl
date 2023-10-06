@@ -15,7 +15,9 @@ using ForwardDiff, ReverseDiff, ForwardDiff, Zygote
 
 function value_and_gradient! end
 
-function project end
+function sufficient_statistic end
+
+function maximize_surrogate end
 
 include("gradient.jl")
 include("mcmcsaem.jl")

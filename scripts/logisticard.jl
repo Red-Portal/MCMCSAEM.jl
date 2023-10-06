@@ -28,8 +28,16 @@ function LogDensityProblems.logdensity(
     ℓp_x + ℓp_β + ℓp_α
 end
 
-function MCMCSAEM.project(::LogisticARD, θ::AbstractVector)
-    @. clamp(θ, 1e-3, Inf)
+function MCMCSAEM.sufficient_statistic(::Logistic, x::AbstractMatrix)
+    mean(eachcol(x)) do xᵢ
+        xᵢ.^2
+    end
+end
+
+function MCMCSAEM.maximize_surrogate(::Logistic, S::AbstractVector)
+    EX² = S
+    σ²  = mean(EX², dims=2)[:,1]
+    1.0./σ²
 end
 
 function load_dataset(::Val{:colon})
@@ -73,12 +81,7 @@ function lasso(dataset, key=1)
     acc, mlpd
 end
 
-function run_bootstrap(data′)
-    boot = bootstrap(mean, data′, BalancedSampling(1024))
-    confint(boot, PercentileConfInt(0.8)) |> only
-end
-
-function run_lass_dataset(dataset)
+function run_lasso_dataset(dataset)
     n_trials = 32
     mlpd     = map(1:n_trials) do key
         lasso(dataset, key)[2]
@@ -88,9 +91,9 @@ function run_lass_dataset(dataset)
 end
 
 function run_lasso_all()
-    run_lass_dataset(Val(:colon))
-    run_lass_dataset(Val(:prostate))
-    run_lass_dataset(Val(:leukemia))
+    run_lasso_dataset(Val(:colon))
+    run_lasso_dataset(Val(:prostate))
+    run_lasso_dataset(Val(:leukemia))
 end
 
 function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
@@ -129,13 +132,6 @@ function run(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
     #Plots.plot(V_hist) |> display
     #throw()
-
-    # model_sel = LogisticARD(X_train[:,select_idx], y_train)
-    # θ_sel     = θ[select_idx]
-    # x_sel     = x[vcat([1], select_idx .+ 1),:]
-    # β_post    = MCMCSAEM.mcmc(rng, model_sel, θ_sel, x_sel, 1e-4, 2000; ad)
-    # β_post    = β_post[:,1000:10:end]
-    # X_test    = hcat(ones(size(X_test,1)), X_test[:,select_idx])
 
     θ = mean(θ_hist, dims=2)[:,1]
 
