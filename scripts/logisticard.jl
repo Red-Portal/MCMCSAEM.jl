@@ -140,7 +140,7 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
 
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
                              ad, callback!, show_progress, mcmc_type)
-    Plots.plot!(1 ./ θ) |> display
+    #Plots.plot!(1 ./ θ) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
     #Plots.plot(V_hist) |> display
     #throw()
@@ -169,7 +169,7 @@ function main(::Val{:logisticard})
         (dataset = :prostate,),
         (dataset = :leukemia,)
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -2, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -3, length=5) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
