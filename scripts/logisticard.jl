@@ -101,7 +101,13 @@ function run_lasso_all()
     run_lasso_dataset(Val(:leukemia))
 end
 
-function run_problem(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
+function predictive_loglikelihood(::LogisticARD, X, y, β_post)
+    logits = X*β_post
+    @tullio ℓp_y[i,j] := logpdf(BernoulliLogit(logits[i,j]), y[i])
+    mean(logsumexp(ℓp_y, dims=2) .- log(size(β_post,2)))
+end
+
+function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_progress=true)
     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, key)
@@ -114,7 +120,7 @@ function run_problem(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     d = size(X_train, 2)
 
     T_burn    = 1000
-    T         = 100000
+    T         = 50000
     γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
@@ -132,28 +138,28 @@ function run_problem(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
         nothing
     end
 
-    θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!, show_progress)
+    θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
+                             ad, callback!, show_progress, mcmc_type)
     Plots.plot!(1 ./ θ) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
     #Plots.plot(V_hist) |> display
     #throw()
 
-    #θ = mean(θ_hist, dims=2)[:,1]
-
     β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 5000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
-    p_test_samples = logistic.(X_test*β_post)
-    p_test         = map(eachrow(p_test_samples)) do p_testᵢ
-        y_predᵢ = vcat((@. rand(rng, Bernoulli(p_testᵢ), 100))...)
-        mean(y_predᵢ)
-    end
-    acc = mean((p_test .> 0.5) .== y_test)
-    lpd = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test)
+    # p_test_samples = logistic.(X_test*β_post)
+    # p_test         = map(eachrow(p_test_samples)) do p_testᵢ
+    #     y_predᵢ = vcat((@. rand(rng, Bernoulli(p_testᵢ), 100))...)
+    #     mean(y_predᵢ)
+    # end
+    # acc = mean((p_test .> 0.5) .== y_test)
+    # lpd = mapreduce((pᵢ, yᵢ) -> logpdf(Bernoulli(pᵢ), yᵢ), +, p_test, y_test) / length(y_test)
+    lpd = predictive_loglikelihood(model, X_test, y_test, β_post)
 
     GC.gc()
 
-    DataFrame(acc=acc, lpd=lpd)
+    DataFrame(lpd=lpd)
 end
 
 function main(::Val{:logisticard})
@@ -187,23 +193,16 @@ function main(::Val{:logisticard})
         for dataset ∈ [:colon, :leukemia, :prostate]
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
-                @combine(:acc_ci    = run_bootstrap(:acc),
-                         :lpd_ci   = run_bootstrap(:lpd))
+                @combine(:lpd_ci   = run_bootstrap(:lpd))
             end
             h  = data′′[:,:stepsize]
             
-            acc      = data′′[:,:acc_ci]
-            acc_mean = [accᵢ[1] for accᵢ ∈ acc]
-            acc_p    = [abs(accᵢ[2] - accᵢ[1]) for accᵢ ∈ acc]
-            acc_m    = [abs(accᵢ[3] - accᵢ[1]) for accᵢ ∈ acc]
-            
             lpd      = data′′[:,:lpd_ci]
             lpd_mean = [lpdᵢ[1] for lpdᵢ ∈ lpd]
-            lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ acc]
-            lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ acc]
+            lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
+            lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
 
             write(h5, "h_$(dataset)",   h)
-            write(h5, "acc_$(dataset)", hcat(acc_mean, acc_p, acc_m)' |> Array)
             write(h5, "lpd_$(dataset)", hcat(lpd_mean, lpd_p, lpd_m)' |> Array)
         end
     end
