@@ -29,7 +29,8 @@ function LogDensityProblems.logdensity(
 end
 
 function MCMCSAEM.preconditioner(::LogisticARD, θ::AbstractVector)
-    Diagonal(vcat([0.1], (@. 1/θ^2 + 1e-7)))
+    ϵ = eps(eltype(θ))
+    Diagonal(vcat([.1], (@. 1/θ^2 + ϵ)))
 end
 
 function MCMCSAEM.sufficient_statistic(::LogisticARD, x::AbstractMatrix)
@@ -42,7 +43,7 @@ function MCMCSAEM.maximize_surrogate(::LogisticARD, S::AbstractVector)
     ϵ   = eps(eltype(S))
     EX² = S
     σ²  = EX²
-    @. 1.0 / (sqrt(σ²) + ϵ)
+    @. min(1.0 / (sqrt(σ²)+ ϵ) + ϵ, 100)
 end
 
 function load_dataset(::Val{:colon})
@@ -120,7 +121,7 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     d = size(X_train, 2)
 
     T_burn    = 1000
-    T         = 50000
+    T         = 10000
     γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
@@ -140,12 +141,16 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
 
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
                              ad, callback!, show_progress, mcmc_type)
-    #Plots.plot!(1 ./ θ) |> display
+    #Plots.plot(1 ./ θ) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
-    #Plots.plot(V_hist) |> display
-    #throw()
 
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 5000; ad, show_progress)
+    idx_m = argmin(θ)
+    idx_p = argmax(θ)
+    Plots.plot(log.(θ_hist[[idx_p, idx_m],:]')) |> display
+    #Plots.plot(V_hist) |> display
+    
+
+    β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 2000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
     # p_test_samples = logistic.(X_test*β_post)
