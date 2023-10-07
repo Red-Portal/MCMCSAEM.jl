@@ -114,7 +114,7 @@ function run_problem(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     d = size(X_train, 2)
 
     T_burn    = 1000
-    T         = 100000
+    T         = 10000
     γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
@@ -133,7 +133,7 @@ function run_problem(::Val{:logisticard}, dataset, h, key=1, show_progress=true)
     end
 
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h; ad, callback!, show_progress)
-    Plots.plot!(1 ./ θ) |> display
+    #Plots.plot!(1 ./ θ) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
     #Plots.plot(V_hist) |> display
     #throw()
@@ -163,7 +163,7 @@ function main(::Val{:logisticard})
         (dataset = :prostate,),
         (dataset = :leukemia,)
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -2, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -3, length=5) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
