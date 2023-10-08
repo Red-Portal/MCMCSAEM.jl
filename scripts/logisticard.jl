@@ -144,11 +144,10 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     #Plots.plot(1 ./ θ) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
 
-    idx_m = argmin(θ)
-    idx_p = argmax(θ)
-    Plots.plot(log.(θ_hist[[idx_p, idx_m],:]')) |> display
+    #idx_m = argmin(θ)
+    #idx_p = argmax(θ)
+    #Plots.plot(log.(θ_hist[[idx_p, idx_m],:]')) |> display
     #Plots.plot(V_hist) |> display
-    
 
     β_post = MCMCSAEM.mcmc(rng, model, θ, x, 1e-3, 2000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
@@ -167,14 +166,14 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     DataFrame(lpd=lpd)
 end
 
-function main(::Val{:logisticard})
+function main(::Val{:logisticard}, mcmc_type)
     n_trials = 32
     datasets = [
         (dataset = :colon,),
         (dataset = :prostate,),
         (dataset = :leukemia,)
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -3, length=5) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, -1, length=13) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
@@ -183,7 +182,7 @@ function main(::Val{:logisticard})
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize, dataset = config
         dfs = @showprogress pmap(1:n_trials) do key
-            run_problem(Val(:logisticard), Val(dataset), stepsize, key, false)
+            run_problem(Val(:logisticard), Val(dataset), mcmc_type, stepsize, key, false)
         end
         df = vcat(dfs...)
         for (k, v) ∈ pairs(config)
@@ -192,9 +191,9 @@ function main(::Val{:logisticard})
         df
     end
 
-    JLD2.save(datadir("exp_pro", "logisticard_accuracy.jld2"), "data", data)
+    JLD2.save(datadir("exp_pro", "logisticard_accuracy_$(mcmc_type).jld2"), "data", data)
 
-    h5open(datadir("exp_pro", "logisticard_accuracy.h5"), "w") do h5
+    h5open(datadir("exp_pro", "logisticard_accuracy_$(mcmc_type).h5"), "w") do h5
         for dataset ∈ [:colon, :leukemia, :prostate]
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
