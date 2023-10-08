@@ -86,58 +86,80 @@ function mcmc_transition!(
     x, acc
 end
 
-function mcmc(rng    ::Random.AbstractRNG,
-              model,
-              θ      ::AbstractVector,
-              x₀     ::AbstractArray,
-              h₀     ::Real,
-              T      ::Integer,
-              T_adapt::Integer  = div(T,2);
-              mcmc_type::Symbol = :mala,
-              ad       ::ADTypes.AbstractADType = ADTypes.AutoZygote,
-              show_progress = true)
+function dual_averaging_adaptation(
+    rng      ::Random.AbstractRNG,
+    model,
+    θ        ::AbstractVector,
+    x₀       ::AbstractArray,
+    h₀       ::Real,
+    T_adapt  ::Integer,
+    mcmc_type::Symbol,
+    ad       ::ADTypes.AbstractADType,
+    prog,
+    ∇ℓ_buf
+)
+    x      = copy(x₀)
+    acc    = 0
+    H_dual = zeros(eltype(h₀), T_adapt)
+    γ_dual = 0.05
+    ℓh₀    = log(h₀)
+    ℓh_bar = ℓh₀
+    ℓh     = ℓh₀
+
+    for t = 1:T_adapt
+        x, α = mcmc_transition!(
+            rng, ad, Val(mcmc_type), model, x, θ, exp(ℓh), ∇ℓ_buf
+        )
+        
+        H_dual[t] = 0.47 - α
+        ℓh        = ℓh₀ - sqrt(t)/γ_dual/(t + 10)*sum(H_dual[1:t])
+        η         = 1/t^(0.9)
+        ℓh_bar    = η*ℓh + (1 - η)*ℓh_bar
+            
+        acc = acc + (α - acc)/t
+            
+        stats = (
+            t       = t,
+            loglike = DiffResults.value(∇ℓ_buf),
+            h       = exp(ℓh),
+            h_bar   = exp(ℓh_bar),
+            acc     = acc,
+            state   = :adaptation,
+        )
+        pm_next!(prog, stats)
+    end
+    exp(ℓh_bar), x
+end
+
+function mcmc(
+    rng    ::Random.AbstractRNG,
+    model,
+    θ      ::AbstractVector,
+    x₀     ::AbstractArray,
+    h₀     ::Real,
+    T      ::Integer,
+    T_adapt::Integer  = div(T,2);
+    mcmc_type::Symbol = :mala,
+    ad       ::ADTypes.AbstractADType = ADTypes.AutoZygote,
+    show_progress = true
+)
     x      = x₀ isa Vector ? reshape(x₀, (:,1)) : copy(x₀)
+    h      = h₀ 
     ∇ℓ_buf = DiffResults.DiffResult(zero(eltype(x)), similar(x, size(x, 1)))
     prog   = Progress(T; enabled=show_progress, showspeed=true)
     x_post = similar(x₀, size(x₀,1), T - T_adapt)
 
     if mcmc_type == :mala
-        # Nesterov Dual Averaging
-        acc    = 0
-        H_dual = zeros(eltype(h₀), T_adapt)
-        γ_dual = 0.05
-        ℓh₀    = log(h₀)
-        ℓh_bar = ℓh₀
-        ℓh     = ℓh₀
-
-        for t = 1:T_adapt
-            x, α = mcmc_transition!(
-                rng, ad, Val(mcmc_type), model, x, θ, exp(ℓh), ∇ℓ_buf
+        for _ = 1:2
+            h, x = dual_averaging_adaptation(
+                rng, model, θ, x, h, div(T_adapt,2), mcmc_type, ad, prog,∇ℓ_buf
             )
-            
-            H_dual[t] = 0.47 - α
-            ℓh        = ℓh₀ - sqrt(t)/γ_dual/(t + 10)*sum(H_dual[1:t])
-            η         = 1/t^(0.5)
-            ℓh_bar    = η*ℓh + (1 - η)*ℓh_bar
-            
-            acc = acc + (α - acc)/t
-            
-            stats = (
-                t       = t,
-                loglike = DiffResults.value(∇ℓ_buf),
-                h       = exp(ℓh),
-                ℓh_bar  = exp(ℓh_bar),
-                acc     = acc,
-                state   = :adaptation,
-            )
-            pm_next!(prog, stats)
         end
     end
 
     acc   = 0
-    h_bar = exp(ℓh_bar)
     for t = 1:T-T_adapt
-        x, α = mcmc_transition!(rng, ad, Val(mcmc_type), model, x, θ, h_bar, ∇ℓ_buf)
+        x, α = mcmc_transition!(rng, ad, Val(mcmc_type), model, x, θ, h, ∇ℓ_buf)
 
         acc = acc + (α - acc)/t
         x_post[:,t] = x
