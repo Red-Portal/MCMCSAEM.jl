@@ -161,14 +161,14 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
         ad, callback!, show_progress = show_progress,
         mcmc_type = mcmc_type,
     )
-    Plots.plot(V_hist) |> display
+    #Plots.plot(V_hist) |> display
     #Plots.plot(θ_hist') |> display
 
     σ = θ[1]
     α = θ[2]
     β = θ[3:end]
 
-    lpd = predictive_likelihood(X_test, y_test, β, α, σ)
+    lpd = predictive_loglikelihood(model, X_test, y_test, β, α, σ)
     DataFrame(lpd=lpd)
 end
 
@@ -178,7 +178,7 @@ function main(::Val{:rpoisson}, mcmc_type)
         (dataset = :medpar,),
         (dataset = :azpro,),
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -1, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, -1.5, length=11) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
@@ -196,9 +196,9 @@ function main(::Val{:rpoisson}, mcmc_type)
         df
     end
 
-    JLD2.save(datadir("exp_pro", "robust_poisson.jld2"), "data", data)
+    JLD2.save(datadir("exp_pro", "robust_poisson_$(mcmc_type)_T=1000.jld2"), "data", data)
 
-    h5open(datadir("exp_pro", "robust_poisson.h5"), "w") do h5
+    h5open(datadir("exp_pro", "robust_poisson_$(mcmc_type)_T=1000.h5"), "w") do h5
         for dataset ∈ [:medpar, :azpro]
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
