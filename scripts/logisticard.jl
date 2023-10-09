@@ -1,6 +1,7 @@
 
 include("common.jl")
 
+using Distributed
 using GLMNet
 using DelimitedFiles
 
@@ -34,7 +35,7 @@ end
 
 function MCMCSAEM.preconditioner(::LogisticARD, θ::AbstractVector)
     ϵ = eps(eltype(θ))
-    Diagonal(vcat([1.0], @. 1 / (θ^2 + ϵ) + 1e-2))
+    Diagonal(vcat([1.0], @. 1 / (θ^2 + ϵ) + 1e-3))
 end
 
 function MCMCSAEM.sufficient_statistic(::LogisticARD, x::AbstractMatrix)
@@ -129,6 +130,35 @@ function load_dataset(::Val{:breast})
     X, y
 end
 
+function load_dataset(::Val{:ionosphere})
+    data = readdlm(datadir("dataset", "ionosphere.csv"), ',')
+    y    = Vector(data[:,end] .== 1.0)
+    X    = Matrix{Float64}(data[:,1:end-1])
+    X, y
+end
+
+function load_dataset(::Val{:caravan})
+    data, _ = readdlm(datadir("dataset", "caravan.csv"), ',', header=true)
+    y       = Vector(data[:,end] .== "g")
+    X       = Matrix{Float64}(data[:,2:end-1])
+
+    df = DataFrame(X, :auto)
+    for col ∈ [Symbol("x$(idx)") for idx ∈ 1:size(X,2)]
+        df = onehot(df, col, outname = col)
+        df = select(df, Not(col))
+    end
+    X = Array{Int}(df)
+
+    X, y
+end
+
+function load_dataset(::Val{:phishing})
+    data, _ = readdlm(datadir("dataset", "phishing.csv"), ',', header=true)
+    y       = Vector(data[:,1] .> 0)
+    X       = Matrix{Float64}(data[:,2:end])
+    X, y
+end
+
 function lasso(dataset, key=1, show_result=false)
     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
     rng  = Philox4x(UInt64, seed, 8)
@@ -202,13 +232,13 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     d = size(X_train, 2)
 
     T_burn    = 1000
-    T         = 10000
-    γ₀        = 1e-1
+    T         = 20000
+    γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
 
     model = LogisticARD(X_train, y_train)
-    θ₀    = ones(d)
+    θ₀    = fill(2.0, d)
     β     = rand(rng, MvNormal(Zeros(d), 1 ./ θ₀))
     α     = [0.0]
     x₀    = reshape(repeat(vcat(α, β), outer=m), (:,m))
@@ -227,11 +257,11 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
                              ad, callback!, show_progress, mcmc_type)
     #θ = mean(θ_hist, dims=2)[:,1]
-    #Plots.plot(1 ./ θ) |> display
+    #Plots.plot!(1 ./ θ) |> display
     #Plots.plot!(-abs.(lasso_model.betas[:,end])) |> display
     #Plots.plot(abs.(x[6001:end])) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
-    #Plots.plot(V_hist) |> display
+    Plots.plot(V_hist) |> display
 
     #θ = @. abs(lasso_model.betas[:,end]) + 1e-2
     #x = x₀
@@ -253,15 +283,16 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
 end
 
 function main(::Val{:logisticard}, mcmc_type)
-    n_trials = 1 #32
+    #@everywhere run(`taskset -pc $(myid() - 1) $(getpid())`)
+
+    n_trials = 64
     datasets = [
-        (dataset = :german,),
         (dataset = :mushroom,),
-        (dataset = :breast,),
         (dataset = :sonar,),
-        (dataset = :australian,),
+        (dataset = :caravan,),
+        (dataset = :phishing,),
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-6, -3, length=5) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, 0, length=11) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
@@ -282,7 +313,7 @@ function main(::Val{:logisticard}, mcmc_type)
     JLD2.save(datadir("exp_pro", "logisticard_$(mcmc_type).jld2"), "data", data)
 
     h5open(datadir("exp_pro", "logisticard_$(mcmc_type).h5"), "w") do h5
-        for dataset ∈ [:breast, :mushroom, :australian, :german, :sonar]
+        for dataset ∈ [:mushroom, :sonar, :caravan, :phishing]
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
                 @combine(:lpd_ci   = run_bootstrap(:lpd))
