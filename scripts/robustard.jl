@@ -4,6 +4,7 @@ include("common.jl")
 using Distributed
 using GLMNet
 using DelimitedFiles
+using MAT
 
 struct StudentTARD{F <: Real, Mat <: AbstractMatrix, Vec <: AbstractVector}
     α_noise::F
@@ -55,31 +56,25 @@ function MCMCSAEM.maximize_surrogate(::StudentTARD, S::AbstractVector)
     @. 1 ./ (σ + ϵ) + ϵ
 end
 
-function load_dataset()
-    data = readdlm(datadir("dataset", "german.data-numeric"))
-    y    = data[:,end] .== 2.0
-    X    = data[:,1:end-1]
-
-    df = DataFrame(X, :auto)
-    for col ∈ [:x1, :x3, :x4, :x9, :x10, :x12, :x14, :x15, :x17]
-        df = onehot(df, col, outname = col)
-        df = select(df, Not(col))
-    end
-    X = Array(df)
+function load_dataset(dataset) 
+    data = MAT.matread(datadir("dataset", "uci", "$(dataset).mat"))["data"]
+    X = data[:, 1:end-1]
+    y = data[:, end]
     X, y
 end
 
-function predictive_loglikelihood(::StudentTARD, X, y, β_post, α_noise, β_noise)
-    s = X*β_post
-    ν = α_noise
-    σ = sqrt(β_noise/α_noise)
-    @tullio ℓp_y[i,j] := logpdf(TDist(ν), (y[i] - s[i,j])/σ)
+function predictive_loglikelihood(::StudentTARD, X, y, β_post, μ_y, σ_y, α_noise, β_noise)
+    s      = X*β_post
+    y_pred = s*σ_y .+ μ_y
+    ν      = α_noise
+    σ      = sqrt(β_noise/α_noise)
+    @tullio ℓp_y[i,j] := logpdf(TDist(ν), (y[i] - y_pred[i,j])/σ)
     mean(logsumexp(ℓp_y, dims=2) .- log(size(β_post,2)))
 end
 
-function predictive_rmse(::StudentTARD, X, y, β_post)
+function predictive_rmse(::StudentTARD, X, y, β_post, μ_y, σ_y)
     s      = X*β_post
-    y_pred = mean(s, dims=2)[:,1]
+    y_pred = σ_y*mean(s, dims=2)[:,1] .+ μ_y
     sqrt(mean(abs2, y_pred - y))
 end
 
@@ -93,15 +88,30 @@ function run_problem(::Val{:studenttard}, dataset, mcmc_type, h, key=1, show_pro
 
     X_train, y_train, X_test, y_test =  prepare_dataset(rng, X, y; ratio=0.8)
 
+    μ_X       = mean(X_train, dims = 1)
+    σ_X       = std(X_train, dims = 1) .+ 1f-6
+    X_train .-= μ_X
+    X_train ./= σ_X
+    X_test  .-= μ_X
+    X_test  ./= σ_X
+
+    μ_y       = mean(y_train)
+    σ_y       = std(y_train)
+    y_train .-= μ_y
+    y_train  /= σ_y
+
     d = size(X_train, 2)
 
-    T_burn    = 1000
-    T         = 20000
+    T_burn    = 500
+    T         = 5000
     γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
 
-    model = LogisticARD(X_train, y_train)
+    α_noise = 1.0
+    β_noise = 1.0
+
+    model = StudentTARD(α_noise, β_noise, X_train, y_train)
     θ₀    = fill(2.0, d)
     β     = rand(rng, MvNormal(Zeros(d), 1 ./ θ₀))
     α     = [0.0]
@@ -121,11 +131,12 @@ function run_problem(::Val{:studenttard}, dataset, mcmc_type, h, key=1, show_pro
     θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
                              ad, callback!, show_progress, mcmc_type)
     #θ = mean(θ_hist, dims=2)[:,1]
-    #Plots.plot!(1 ./ θ) |> display
+    #Plots.plot(1 ./ θ) |> display
     #Plots.plot!(-abs.(lasso_model.betas[:,end])) |> display
     #Plots.plot(abs.(x[6001:end])) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
-    Plots.plot(V_hist) |> display
+    #Plots.plot!(V_hist) |> display
+    #return
 
     #θ = @. abs(lasso_model.betas[:,end]) + 1e-2
     #x = x₀
@@ -135,28 +146,34 @@ function run_problem(::Val{:studenttard}, dataset, mcmc_type, h, key=1, show_pro
     #Plots.plot(log.(θ_hist[[idx_p, idx_m],:]')) |> display
     #Plots.plot(V_hist) |> display
 
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x[:,end], 1e-3, 5000; ad, show_progress)
+    β_post = MCMCSAEM.mcmc(rng, model, θ, x[:,end], 1e-4, 5000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
-    lpd = predictive_loglikelihood(model, X_test, y_test, β_post)
-    acc = predictive_rmse(         model, X_test, y_test, β_post)
+    lpd  = predictive_loglikelihood(model, X_test, y_test, β_post, μ_y, σ_y, α_noise, β_noise)
+    rmse = predictive_rmse(         model, X_test, y_test, β_post, μ_y, σ_y)
 
     GC.gc()
 
-    DataFrame(lpd=lpd, acc=acc)
+    DataFrame(lpd=lpd, rmse=rmse)
 end
 
 function main(::Val{:studenttard}, mcmc_type)
-    #@everywhere run(`taskset -pc $(myid() - 1) $(getpid())`)
+    @everywhere run(`taskset -pc $(myid() - 1) $(getpid())`)
 
     n_trials = 64
     datasets = [
-        (dataset = :mushroom,),
-        (dataset = :sonar,),
-        (dataset = :caravan,),
-        (dataset = :phishing,),
+        (dataset = :housing,),
+        (dataset = :forest,),
+        (dataset = :stock,),
+        (dataset = :solar,),
+        (dataset = :wine,),
+        (dataset = :gas,),
+        (dataset = :skillcraft,),
+        (dataset = :sml,),
+        (dataset = :parkinsons,),
+        (dataset = :pumadyn32nm,),
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, 0, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -2, length=11) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
@@ -165,7 +182,7 @@ function main(::Val{:studenttard}, mcmc_type)
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize, dataset = config
         dfs = @showprogress pmap(1:n_trials) do key
-            run_problem(Val(:logisticard), Val(dataset), mcmc_type, stepsize, key, false)
+            run_problem(Val(:studenttard), dataset, mcmc_type, stepsize, key, false)
         end
         df = vcat(dfs...)
         for (k, v) ∈ pairs(config)
@@ -174,10 +191,22 @@ function main(::Val{:studenttard}, mcmc_type)
         df
     end
 
-    JLD2.save(datadir("exp_pro", "logisticard_$(mcmc_type).jld2"), "data", data)
+    JLD2.save(datadir("exp_pro", "studenttard_$(mcmc_type).jld2"), "data", data)
+    data = JLD2.load(datadir("exp_pro", "studenttard_$(mcmc_type).jld2"), "data")
 
-    h5open(datadir("exp_pro", "logisticard_$(mcmc_type).h5"), "w") do h5
-        for dataset ∈ [:mushroom, :sonar, :caravan, :phishing]
+    h5open(datadir("exp_pro", "studenttard_$(mcmc_type).h5"), "w") do h5
+        for dataset ∈ [
+            :housing,
+            :forest,
+            :stock,
+            :solar,
+            :wine,
+            :gas,
+            :skillcraft,
+            :sml,
+            :parkinsons,
+            :pumadyn32nm,
+        ]
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
                 @combine(:lpd_ci   = run_bootstrap(:lpd))
