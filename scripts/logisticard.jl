@@ -261,7 +261,7 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     #Plots.plot!(-abs.(lasso_model.betas[:,end])) |> display
     #Plots.plot(abs.(x[6001:end])) |> display
     #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
-    Plots.plot(V_hist) |> display
+    #Plots.plot(V_hist) |> display
 
     #θ = @. abs(lasso_model.betas[:,end]) + 1e-2
     #x = x₀
@@ -285,7 +285,7 @@ end
 function main(::Val{:logisticard}, mcmc_type)
     #@everywhere run(`taskset -pc $(myid() - 1) $(getpid())`)
 
-    n_trials = 64
+    n_trials = 32
     datasets = [
         (dataset = :mushroom,),
         (dataset = :sonar,),
