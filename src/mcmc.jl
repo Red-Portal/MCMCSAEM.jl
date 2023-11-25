@@ -111,7 +111,7 @@ function dual_averaging_adaptation(
             rng, ad, Val(mcmc_type), model, x, θ, exp(ℓh), ∇ℓ_buf
         )
         
-        H_dual[t] = 0.47 - α
+        H_dual[t] = 0.574 - α
         ℓh        = ℓh₀ - sqrt(t)/γ_dual/(t + 10)*sum(H_dual[1:t])
         η         = 1/t^(0.9)
         ℓh_bar    = η*ℓh + (1 - η)*ℓh_bar
