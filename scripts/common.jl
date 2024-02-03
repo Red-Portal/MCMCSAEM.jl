@@ -1,6 +1,6 @@
 
 using DrWatson
-@quickactivate "MCMCSAEM"
+@quickactivate "scripts"
 
 using ADTypes
 using Accessors

@@ -12,7 +12,7 @@ using Random
 using Statistics
 using StatsFuns
 
-using ForwardDiff, ReverseDiff, ForwardDiff, Zygote
+using ForwardDiff, ReverseDiff, Zygote
 
 function value_and_gradient! end
 
