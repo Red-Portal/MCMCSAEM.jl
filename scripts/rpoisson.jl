@@ -149,20 +149,30 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
     μ₀    = X*β₀ .+ α₀
     x₀    = rand(rng, MvNormal(μ₀, σ₀), m)
 
-    θ_hist = zeros(length(θ₀), T)
-    V_hist = zeros(T)
-    function callback!(t, x, θ, stats)
-        θ_hist[:,t] = θ
-        V_hist[t]   = stats.loglike
-        nothing
+    function callback!(t, x, θ, stat)
+        σ = θ[1]
+        α = θ[2]
+        β = θ[3:end]
+        if mod(t, 10) == 0 || t == 0
+            test_lpd = predictive_loglikelihood(model, X_test, y_test, β, α, σ)
+            (test_lpd = test_lpd,)
+        else
+            NamedTuple()
+        end
     end
-    θ, _ = MCMCSAEM.mcmcsaem(
+    θ, stats = MCMCSAEM.mcmcsaem(
         rng, model, x₀, θ₀, T, T_burn, γ, h;
         ad, callback!, show_progress = show_progress,
         mcmc_type = mcmc_type,
     )
-    #Plots.plot(V_hist) |> display
+    #Plots.plot!(V_hist) |> display
     #Plots.plot(θ_hist') |> display
+    
+    stats_filt = filter(Base.Fix2(haskey, :test_lpd), stats)
+    Plots.plot!([stat.test_lpd for stat in stats_filt]) |> display
+
+    #stats_filt = filter(Base.Fix2(haskey, :loglike), stats)
+    #Plots.plot!([stat.loglike for stat in stats_filt]) |> display
 
     σ = θ[1]
     α = θ[2]

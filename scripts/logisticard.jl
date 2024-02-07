@@ -254,7 +254,7 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
         nothing
     end
 
-    θ, x = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
+    θ, _ = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
                              ad, callback!, show_progress, mcmc_type)
     #θ = mean(θ_hist, dims=2)[:,1]
     #Plots.plot!(1 ./ θ) |> display
@@ -271,7 +271,7 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     #Plots.plot(log.(θ_hist[[idx_p, idx_m],:]')) |> display
     #Plots.plot(V_hist) |> display
 
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x[:,end], 1e-3, 5000; ad, show_progress)
+    β_post = MCMCSAEM.mcmc(rng, model, θ, x₀, 1e-3, 5000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
     lpd = predictive_loglikelihood(model, X_test, y_test, β_post)
