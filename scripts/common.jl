@@ -6,6 +6,7 @@ using ADTypes
 using Accessors
 using Bootstrap
 using DataFrames, DataFramesMeta
+using DelimitedFiles
 using Distributions
 using FillArrays 
 using LogDensityProblems
@@ -15,6 +16,7 @@ using Plots, StatsPlots
 using ProgressMeter
 using Random
 using Random, Random123
+using RDatasets
 using SimpleUnPack
 using Statistics
 using StatsFuns

@@ -18,6 +18,8 @@ function value_and_gradient! end
 
 function sufficient_statistic end
 
+sufficient_statistic(model, x, θ) = sufficient_statistic(model, x)
+
 function maximize_surrogate end
 
 preconditioner(model, θ) = I
