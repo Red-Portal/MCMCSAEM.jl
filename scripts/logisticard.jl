@@ -237,39 +237,19 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
 
+    n_inner_mcmc = 4
+
     model = LogisticARD(X_train, y_train)
     θ₀    = fill(2.0, d)
     β     = rand(rng, MvNormal(Zeros(d), 1 ./ θ₀))
     α     = [0.0]
     x₀    = reshape(repeat(vcat(α, β), outer=m), (:,m))
 
-    #y_glm_train = hcat(Int.(.!y_train), Int.(y_train))
-    #lasso_model = glmnet(X_train, y_glm_train, Binomial(); intercept=true)
-    #lasso_sel   = lasso_model.betas[:,end] .> 0
-
-    #θ_hist = zeros(length(θ₀), T)
-    V_hist = zeros(T)
-    function callback!(t, x, θ, stats)
-        V_hist[t] = stats.loglike
-        nothing
-    end
-
-    θ, _ = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
-                             ad, callback!, show_progress, mcmc_type)
-    #θ = mean(θ_hist, dims=2)[:,1]
-    #Plots.plot!(1 ./ θ) |> display
-    #Plots.plot!(-abs.(lasso_model.betas[:,end])) |> display
-    #Plots.plot(abs.(x[6001:end])) |> display
-    #Plots.plot!(log.(mean(θ_hist, dims=2)[:,1])) |> display
-    #Plots.plot(V_hist) |> display
-
-    #θ = @. abs(lasso_model.betas[:,end]) + 1e-2
-    #x = x₀
-
-    #idx_m = argmin(θ)
-    #idx_p = argmax(θ)
-    #Plots.plot(log.(θ_hist[[idx_p, idx_m],:]')) |> display
-    #Plots.plot(V_hist) |> display
+    θ, stats = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
+                                 ad, show_progress, mcmc_type,
+                                 n_inner_mcmc=n_inner_mcmc)
+    #stats_loglike = filter(Base.Fix2(haskey, :loglike), stats)
+    #Plots.plot([stat.loglike for stat in stats_loglike]) |> display
 
     β_post = MCMCSAEM.mcmc(rng, model, θ, x₀, 1e-3, 5000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
