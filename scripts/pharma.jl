@@ -218,14 +218,15 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
     )
 
 
-    T_burn    = 1000
-    T         = 2000
+    T_burn    = 100
+    T         = 1000
     γ₀        = 1e-1
     γ         = t -> γ₀/sqrt(t)
 
-    n_inner_mcmc = 16
+    n_inner_mcmc = 4
 
     θ₀ = [log(1.),log(20),log(0.5),1,1,1,1]
+    #θ₀ = [0.,0.,0.,.1,1,1,1]
     x₀ = sample_prior(rng, model, θ₀, 1)
 
     function callback!(t, x, θ, stat)
