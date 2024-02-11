@@ -290,17 +290,18 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
         100; ad, mcmc_type = :mala, show_progress = show_progress
     )
     lpd  = lml/test_model.n_subject
+    lpd  = isnan(lpd) ? -Inf : lpd
     DataFrame(rmse=rmse, lpd=lpd, lml=lml)
 end
 
 function main(mcmc_type)
-    n_trials  = 32
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, 0., length=21) ]
+    n_trials  = 1#32
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, 0., length=17) ]
     configs   = stepsizes
 
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize = config
-        dfs = @showprogress pmap(1:n_trials) do key
+        dfs = @showprogress map(1:n_trials) do key
             run_problem(Val(:pharma), mcmc_type, stepsize, key, false)
         end
         df = vcat(dfs...)
@@ -314,16 +315,16 @@ function main(mcmc_type)
 
     h5open(datadir("exp_pro", "pharma_$(mcmc_type).h5"), "w") do h5
         data′ = @chain groupby(data, :stepsize) begin
-            @combine(:rmse_ci   = run_bootstrap(:rmse))
+            @combine(:lpd_ci   = run_bootstrap(:lpd))
         end
         h  = data′[:,:stepsize]
             
-        rmse      = data′[:,:rmse_ci]
-        rmse_mean = [rmseᵢ[1] for rmseᵢ ∈ rmse]
-        rmse_p    = [abs(rmseᵢ[2] - rmseᵢ[1]) for rmseᵢ ∈ rmse]
-        rmse_m    = [abs(rmseᵢ[3] - rmseᵢ[1]) for rmseᵢ ∈ rmse]
+        lpd      = data′[:,:lpd_ci]
+        lpd_mean = [lpdᵢ[1] for lpdᵢ ∈ lpd]
+        lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
+        lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
 
         write(h5, "h_$(dataset)",    h)
-        write(h5, "rmse_$(dataset)", hcat(rmse_mean, rmse_p, rmse_m)' |> Array)
+        write(h5, "rmse_$(dataset)", hcat(lpd_mean, lpd_p, lpd_m)' |> Array)
     end
 end
