@@ -5,6 +5,7 @@ struct PharmaNLME{
     V   <: AbstractVector,
     I   <: AbstractVector{<:Integer},
     Ind <: AbstractRange,
+    T   <: Real
 }
     t        ::V
     dosage   ::V
@@ -15,9 +16,11 @@ struct PharmaNLME{
 
     n_subject::Int
 
-    ka_idx ::Int
+    ka_idx ::Ind
     vol_idx::Ind
     clr_idx::Ind
+
+    temp   ::T
 end
 
 function PharmaNLME(
@@ -32,37 +35,41 @@ function PharmaNLME(
     @assert length(weight)  == length(dosage)
 
     n_subject = length(unique(subject))
-    vol_idx   = 1:n_subject
-    clr_idx   = n_subject + 1:2*n_subject
-    ka_idx    = 2*n_subject + 1
+    ka_idx    = 1:n_subject
+    vol_idx   = n_subject + 1:2*n_subject
+    clr_idx   = 2*n_subject + 1:3*n_subject
+
+    #vol_idx   = 1:n_subject
+    #clr_idx   = n_subject + 1:2*n_subject
+    #ka_idx    = 2*n_subject + 1:3*n_subject
 
     PharmaNLME(
         t, dosage, weight, y, subject, n_subject,
-        ka_idx, vol_idx, clr_idx
+        ka_idx, vol_idx, clr_idx, 1.0
     )
 end
 
 function LogDensityProblems.dimension(model::PharmaNLME)
     SimpleUnPack.@unpack n_subject, y = model
-    2*n_subject + 1
+    3*n_subject
 end
 
 function LogDensityProblems.capabilities(::Type{<:PharmaNLME})
     LogDensityProblems.LogDensityOrder{0}()
 end
 
-function model1cptmt(ka::Real, k::Real, dos::Real, vol::Real, t::Real)
-    dos*ka/(vol*(ka - k))*(exp(-k*t) - exp(-ka*t))
+function model1cptmt(ka::Real, clr::Real, dos::Real, vol::Real, t::Real)
+    dos*ka/(vol*ka - clr)*(exp(-clr/vol*t) - exp(-ka*t))
 end
 
 function LogDensityProblems.logdensity(
-    model::PharmaNLME, η::AbstractVector, θ::AbstractVector
+    model::PharmaNLME, z::AbstractVector, θ::AbstractVector
 )
-    SimpleUnPack.@unpack weight, dosage, t, y, subject, n_subject, vol_idx, clr_idx, ka_idx = model
+    SimpleUnPack.@unpack weight, dosage, t, y, subject, n_subject, vol_idx, clr_idx, ka_idx, temp = model
 
-    η_vol = η[vol_idx]
-    η_clr = η[clr_idx]
-    η_ka  = η[ka_idx]
+    ℓvol = z[vol_idx]
+    ℓclr = z[clr_idx]
+    ℓka  = z[ka_idx]
 
     ℓμ_ka  = θ[1]
     ℓμ_vol = θ[2]
@@ -71,81 +78,63 @@ function LogDensityProblems.logdensity(
     σ_ka  = θ[4]
     σ_vol = θ[5]
     σ_clr = θ[6]
+    a     = θ[7]
 
-    β     = θ[7]
-    a     = θ[8]
+    vol = exp.(ℓvol)
+    ka  = exp.(ℓka)
+    clr = exp.(ℓclr)
 
-    vol = @. exp(ℓμ_vol + η_vol)
-    ka  = @. exp(ℓμ_ka  + η_ka)
-    clr = @. exp(ℓμ_clr + β*weight + η_clr)
+    ℓp_ℓvol = logpdf(MvNormal(Fill(ℓμ_vol, n_subject), σ_vol), ℓvol)
+    ℓp_ℓclr = logpdf(MvNormal(Fill(ℓμ_clr, n_subject), σ_clr), ℓclr)
+    ℓp_ℓka  = logpdf(MvNormal(Fill(ℓμ_ka,  n_subject), σ_ka ), ℓka)
 
-    ℓp_η_ℓvol = logpdf(MvNormal(Zeros(n_subject), σ_vol), η_vol)
-    ℓp_η_ℓclr = logpdf(MvNormal(Zeros(n_subject), σ_clr), η_clr)
-    ℓp_η_ℓka  = logpdf(Normal(  ℓμ_ka,            σ_ka ),  η_ka)
-    
-    k       = clr./vol
-    k_vec   = k[     subject]
     dos_vec = dosage[subject]
     vol_vec = vol[   subject]
+    clr_vec = clr[   subject]
+    ka_vec  = ka[    subject]
 
-    μ    = @. model1cptmt(ka, k_vec, dos_vec, vol_vec, t)
-
-    #println(sqrt(mean(abs2, μ[1:10] - y[1:10])))
-
+    μ    = @. model1cptmt(ka_vec, clr_vec, dos_vec, vol_vec, t)
     ℓp_y = logpdf(MvNormal(μ, a), y)
 
-    ℓp_y + ℓp_η_ℓvol + ℓp_η_ℓclr + ℓp_η_ℓka
+    temp*ℓp_y + ℓp_ℓvol + ℓp_ℓclr + ℓp_ℓka
 end
 
 function MCMCSAEM.sufficient_statistic(
     model::PharmaNLME,
     x    ::AbstractMatrix,
-    θ    ::AbstractVector
 )
     SimpleUnPack.@unpack t, y, dosage, subject, weight, vol_idx, clr_idx, ka_idx = model
     mean(eachcol(x)) do xi
-        η_ka  = xi[ka_idx]
-        η_vol = xi[vol_idx]
-        η_clr = xi[clr_idx]
+        ℓka  = xi[ka_idx]
+        ℓvol = xi[vol_idx]
+        ℓclr = xi[clr_idx]
 
-        β      = θ[7]
-        ℓμ_ka  = θ[1]
-        ℓμ_vol = θ[2]
-        ℓμ_clr = θ[3]
+        vol   = exp.(ℓvol)
+        ka    = exp.(ℓka)
+        clr   = exp.(ℓclr)
 
-        vol = @. exp(ℓμ_vol + η_vol)
-        ka  = @. exp(ℓμ_ka  + η_ka)
-        clr = @. exp(ℓμ_clr + β*weight + η_clr)
-
-        k       = clr./vol
-        k_vec   = k[     subject]
+        clr_vec = clr[   subject]
         dos_vec = dosage[subject]
         vol_vec = vol[   subject]
-        μ       = @. model1cptmt(ka, k_vec, dos_vec, vol_vec, t)
+        ka_vec  = ka[    subject]
+        μ       = @. model1cptmt(ka_vec, clr_vec, dos_vec, vol_vec, t)
         ϵ       = y - μ
 
-        Ex_ka  = mean(η_ka)
-        Ex_vol = mean(η_vol)
-        Ex_clr = mean(η_clr)
+        Ex_ka  = mean(ℓka)
+        Ex_vol = mean(ℓvol)
+        Ex_clr = mean(ℓclr)
 
-        Ex2_ka  = mean(η_ka.^2)
-        Ex2_vol = mean(η_vol.^2)
-        Ex2_clr = mean(η_clr.^2)
-        Eclrwht = mean(η_clr.*weight)
+        Ex2_ka  = mean(ℓka.^2)
+        Ex2_vol = mean(ℓvol.^2)
+        Ex2_clr = mean(ℓclr.^2)
+        Eϵ2     = mean(ϵ.^2)
 
-        Eϵ2 = mean(ϵ.^2)
-
-        [Ex_ka, Ex2_ka, Ex_vol, Ex2_vol, Ex_clr, Ex2_clr, Eclrwht, Eϵ2]
+        [Ex_ka, Ex2_ka, Ex_vol, Ex2_vol, Ex_clr, Ex2_clr, Eϵ2]
     end
 end
 
 function MCMCSAEM.preconditioner(model::PharmaNLME, θ::AbstractVector)
-    n_subject = model.n_subject
-    ϵ  = 1e-7
-    σ_ka, σ_vol, σ_ℓclr = θ[4], θ[5], θ[6]
-    Diagonal(vcat(
-        fill(σ_vol + ϵ, n_subject), fill(σ_ℓclr + ϵ, n_subject), [σ_ka + ϵ]
-    ))
+    I
 end
 
 function MCMCSAEM.maximize_surrogate(model::PharmaNLME, S::AbstractVector)
@@ -154,108 +143,187 @@ function MCMCSAEM.maximize_surrogate(model::PharmaNLME, S::AbstractVector)
     Ex_ka, Ex2_ka   = S[1], S[2]
     Ex_vol, Ex2_vol = S[3], S[4]
     Ex_clr, Ex2_clr = S[5], S[6]
-    Eclrwht         = S[7]
-    Eϵ2             = S[8]
+    Eϵ2             = S[7]
 
-    σ_ℓka  = sqrt(Ex2_ka  - Ex_ka^2)
-    σ_ℓvol = sqrt(Ex2_vol - Ex_vol^2)
+    σ_ℓka  = sqrt(Ex2_ka  - Ex_ka.^2)
+    σ_ℓvol = sqrt(Ex2_vol - Ex_vol.^2)
+    σ_ℓclr = sqrt(Ex2_clr - Ex_clr.^2)
     a      = sqrt(Eϵ2)
 
-    var_weight = var(weight)
-    β          = 0 #(Eclrwht - Ex_clr*mean(weight))/var_weight
-    μ_ℓclr     = Ex_clr #- β*mean(weight)
-    σ_ℓclr     = sqrt(Ex2_clr - Ex_clr.^2) #0.5
-
-    [ Ex_ka, Ex_vol, μ_ℓclr, σ_ℓka, σ_ℓvol, σ_ℓclr, β, a]
+    [ Ex_ka, Ex_vol, Ex_clr, σ_ℓka, σ_ℓvol, σ_ℓclr, a ]
 end
 
-function viz(idx, ℓV, ℓclr, ℓka)
-    #data = RDatasets.dataset("datasets", "Theoph")
-    data = readdlm(datadir("theophylline_saemix.csv"), ',', Any, '\n')
-    data = DataFrame(identity.(data), ["Subject", "Dose", "Time", "Conc", "Wt", "Sex"])
-    intvl = 10
+function load_dataset(rng::Random.AbstractRNG, ::Val{:pharma})
+    data   = readdlm(datadir("theophylline_saemix.csv"), ',', Any, '\n')
+    data   = DataFrame(identity.(data), ["Subject", "Dose", "Time", "Conc", "Wt", "Sex"])
+    groups = groupby(data, :Subject)
 
-    n_subjects = length(unique(data.Subject))
-    idx_range  = (idx-1)*intvl+1:idx*intvl
-    t          = data.Time[idx_range] |> Vector
-    Plots.scatter(t, data.Conc[idx_range], color=:red, yscale=:log10)
-
-    map(ℓV, ℓclr, ℓka) do ℓV_i, ℓclr_i, ℓka_i
-        ka  = exp(ℓka_i)
-        dos = fill(data.Dose[(idx-1)*n_subjects + 1], intvl)
-        vol = fill(exp(ℓV_i), intvl)
-        clr = exp(ℓclr_i)
-        k   = clr ./ vol
-        μ   = @. model1cptmt(ka, k, dos, vol, t)
-        Plots.plot!(t, μ, color=:blue, alpha=0.5, yscale=:log10) |> display
-    end
+    t       = [Array{Float64}(group.Time) for group in groups]
+    y       = [Array{Float64}(group.Conc) for group in groups]
+    dosage  = [Float64(first(group.Dose)) for group in groups]
+    weight  = [Float64(first(group.Wt))   for group in groups]
+    subject = collect(1:length(groups))
+    t, dosage, y, weight, subject
 end
 
+function sample_prior(
+    rng      ::Random.AbstractRNG,
+    model    ::PharmaNLME,
+    θ        ::AbstractVector,
+    n_samples::Int
+)
+    n_subject = model.n_subject
+    μ_z       = repeat(θ[1:3], inner=n_subject)
+    σ_z       = repeat(θ[4:6], inner=n_subject)
+    rand(rng, MvNormal(μ_z, σ_z), n_samples)
+end
 
-function main(mcmc_type, h, key = 1)
+function logpdf_prior(
+    model    ::PharmaNLME,
+    θ        ::AbstractVector,
+    z        ::AbstractVector
+)
+    n_subject = model.n_subject
+    μ_z       = repeat(θ[1:3], inner=n_subject)
+    σ_z       = repeat(θ[4:6], inner=n_subject)
+    logpdf(MvNormal(μ_z, σ_z), z)
+end
+
+function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, key)
-    #ad = ADTypes.AutoReverseDiff()
+    #ad = ADTypes.AutoZygote()
     ad = ADTypes.AutoForwardDiff()
 
-    #data = RDatasets.dataset("datasets", "Theoph")
-    #intvl = 11
+    t, dosage, y, weight, subject = load_dataset(rng, Val(:pharma))
 
-    data  = readdlm(datadir("theophylline_saemix.csv"), ',', Any, '\n')
-    data  = DataFrame(identity.(data), ["Subject", "Dose", "Time", "Conc", "Wt", "Sex"])
-    intvl = 10
+    n_samples  = length(first(t))
+    n_subjects = length(t)
+    n_train    = floor(Int, 0.8*n_subjects)
+    n_test     = n_subjects - n_train
+    train_idx  = sample(rng, 1:n_subjects, n_train; replace=false)
+    test_idx   = setdiff(collect(1:n_subjects), train_idx)
 
-    display(data)
+    t_test = vcat(t[test_idx]...)
+    y_test = vcat(y[test_idx]...)
+    subject_test = repeat(1:n_test, inner=length(first(t)))
 
-    subjects = @. parse(Int, string(data.Subject))
-    T        = Array(data.Time)
-    D        = Array(data.Dose[1:intvl:end])
-    BW       = Array(data.Wt[  1:intvl:end])
-    y        = Array(data.Conc)
+    t_train       = vcat(t[train_idx]...)
+    y_train       = vcat(y[train_idx]...)
+    subject_train = repeat(1:n_train, inner=length(first(t)))
 
-    model = PharmaNLME(D, BW, T, y, subjects)
+    model = PharmaNLME(
+        dosage[train_idx], weight[train_idx], t_train, y_train, subject_train
+    )
+
 
     T_burn    = 1000
-    T         = 10000
+    T         = 2000
     γ₀        = 1e-1
     γ         = t -> γ₀/sqrt(t)
 
-    θ₀ = [-1,0,0,0.1,1,1,0,1]
-    x₀ = reshape(randn(rng, LogDensityProblems.dimension(model)), (:,1))
+    n_inner_mcmc = 16
+
+    θ₀ = [log(1.),log(20),log(0.5),1,1,1,1]
+    x₀ = sample_prior(rng, model, θ₀, 1)
 
     function callback!(t, x, θ, stat)
-        (
-            μ_ka  = θ[1],
-            μ_vol = θ[2],
-            μ_clr = θ[3],
-            σ_ka  = θ[4],
-            σ_vol = θ[5],
-            σ_clr = θ[6],
-            a     = θ[8]
+        μ_ℓka  = θ[1]
+        μ_ℓvol = θ[2]
+        μ_ℓclr = θ[3]
+        a      = θ[7]
+
+        stat = (
+            μ_ka       = μ_ℓka,
+            μ_vol      = μ_ℓvol,
+            μ_clr      = μ_ℓclr, 
+            σ_ka       = θ[4],
+            σ_vol      = θ[5],
+            σ_clr      = θ[6],
+            a          = a
          )
+
+        if mod(t, 100) == 0 
+            vol = exp(μ_ℓvol)
+            ka  = exp(μ_ℓka)
+            clr = exp(μ_ℓclr)
+
+            dos_test = repeat(dosage[test_idx], inner=n_samples)
+            μ_test   = @. model1cptmt(ka, clr, dos_test, vol, t_test)
+
+            dos_train = repeat(dosage[train_idx], inner=n_samples)
+            μ_train   = @. model1cptmt(ka, clr, dos_train, vol, t_train)
+
+            merge(stat, (rmse_train = sqrt(mean(abs2, μ_train - y_train)),
+                         rmse_test  = sqrt(mean(abs2, μ_test  - y_test)),))
+        else
+            stat
+        end
     end
 
     θ, stats = MCMCSAEM.mcmcsaem(
         rng, model, x₀, θ₀, T, T_burn, γ, h;
         ad, callback! = callback!,
-        show_progress = true,
+        show_progress = show_progress,
         mcmc_type,
-        n_inner_mcmc  = 4
+        n_inner_mcmc  = n_inner_mcmc
     )
-    stats_loglike = filter(Base.Fix2(haskey, :loglike), stats)
-    Plots.plot([stat.loglike for stat in stats_loglike[2:end]]) |> display
+    stats_rmse = filter(Base.Fix2(haskey, :rmse_train), stats)
+    if show_progress
+        Plots.plot( [stat.rmse_train for stat in stats_rmse]) |> display
+        Plots.plot!([stat.rmse_test  for stat in stats_rmse]) |> display
+    end
+    rmse = last([stat.rmse_test  for stat in stats_rmse])
+    rmse = isnan(rmse) ? 10 : rmse
+    
+    test_model = PharmaNLME(
+        dosage[test_idx], weight[test_idx], t_test, y_test, subject_test
+    )
 
-    #θ = θ₀ #[log(1.58), log(31.6), log(1.55), 0.3, 0.02, 0.06, 0.008, 0.74]
-
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x₀, 1e-3, 4000; ad, show_progress = true)
-
-    #@info("",
-    #      mean(β_post[1,:]),
-    #      mean(β_post[13,:]),
-    #      mean(β_post[25,:]))
-
-    #idx = 3
-    #viz(idx, β_post[idx,1:100:end] .+ θ[2], β_post[12+idx,1:100:end] .+ θ[3], β_post[25,1:100:end] .+ θ[1])
+    n_subject = test_model.n_subject
+    μ_z       = repeat(θ[1:3], inner=n_subject)
+    σ_z       = repeat(θ[4:6], inner=n_subject)
+    q0        = MvNormal(μ_z, σ_z)
+    lml       = MCMCSAEM.ais(
+        rng, test_model, θ, 5e-3, q0, range(0.,1.; length=1000).^2,
+        100; ad, mcmc_type = :mala, show_progress = show_progress
+    )
+    lpd  = lml/test_model.n_subject
+    DataFrame(rmse=rmse, lpd=lpd, lml=lml)
 end
 
+function main(mcmc_type)
+    n_trials  = 32
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, 0., length=21) ]
+    configs   = stepsizes
+
+    data = @showprogress mapreduce(vcat, configs) do config
+        SimpleUnPack.@unpack stepsize = config
+        dfs = @showprogress pmap(1:n_trials) do key
+            run_problem(Val(:pharma), mcmc_type, stepsize, key, false)
+        end
+        df = vcat(dfs...)
+        for (k, v) ∈ pairs(config)
+            df[:,k] .= v
+        end
+        df
+    end
+
+    JLD2.save(datadir("exp_pro", "pharma_$(mcmc_type).jld2"), "data", data)
+
+    h5open(datadir("exp_pro", "pharma_$(mcmc_type).h5"), "w") do h5
+        data′ = @chain groupby(data, :stepsize) begin
+            @combine(:rmse_ci   = run_bootstrap(:rmse))
+        end
+        h  = data′[:,:stepsize]
+            
+        rmse      = data′[:,:rmse_ci]
+        rmse_mean = [rmseᵢ[1] for rmseᵢ ∈ rmse]
+        rmse_p    = [abs(rmseᵢ[2] - rmseᵢ[1]) for rmseᵢ ∈ rmse]
+        rmse_m    = [abs(rmseᵢ[3] - rmseᵢ[1]) for rmseᵢ ∈ rmse]
+
+        write(h5, "h_$(dataset)",    h)
+        write(h5, "rmse_$(dataset)", hcat(rmse_mean, rmse_p, rmse_m)' |> Array)
+    end
+end

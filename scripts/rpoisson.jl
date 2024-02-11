@@ -32,22 +32,31 @@ function LogDensityProblems.logdensity(
     ℓp_x + ℓp_η
 end
 
-function MCMCSAEM.sufficient_statistic(::RobustPoisson, x::AbstractMatrix)
-    mean(eachcol(x)) do xᵢ
-        vcat(xᵢ, xᵢ.^2)
+function MCMCSAEM.sufficient_statistic(
+    model::RobustPoisson, η::AbstractMatrix, θ::AbstractVector
+)
+    SimpleUnPack.@unpack X, y = model
+    α      = θ[2]
+    β      = θ[3:end]
+    η_pred = X*β .+ α
+    mean(eachcol(η)) do ηi
+        Eη  = mean(ηi)
+        XTη = X'*ηi
+        Eϵ2 = mean((η_pred - ηi).^2)
+        vcat(Eη, Eϵ2, XTη)
     end
 end
 
 function MCMCSAEM.maximize_surrogate(model::RobustPoisson, S::AbstractVector)
     SimpleUnPack.@unpack X, QR = model
 
-    d   = div(length(S), 2)
-    EX  = S[1:d]
-    EX² = S[d+1:end]
-    μ   = mean(EX)
-    σ   = sqrt(mean(EX²) - μ^2)
-    β   = QR\EX
-    α   = mean(X*β .- μ)
+    Eη  = S[1]
+    Eϵ2 = S[2]
+    XTη = S[3:end]
+
+    β   = QR\XTη
+    α   = Eη - dot(β, mean(X, dims=1)[1,:])
+    σ   = sqrt(Eϵ2)
     vcat([σ], [α], β)
 end
 
@@ -124,12 +133,13 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, 1)
 
-    T_burn = 500
+    T_burn = 100
     T      = 1000
     γ₀     = 1e-0
     γ      = t -> γ₀ / sqrt(t)
     m      = 1    # n_chains
-    
+
+    n_inner_mcmc = 4
 
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, key)
@@ -138,7 +148,7 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
 
     X_train, y_train, X_test, y_test =  prepare_dataset(rng, X, y; ratio=0.8)
 
-    model = RobustPoisson(X_train, y_train, qr(X_train))
+    model = RobustPoisson(X_train, y_train, qr(X_train'*X_train))
 
     X     = model.X
     d     = size(X, 2)
@@ -163,13 +173,11 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
     θ, stats = MCMCSAEM.mcmcsaem(
         rng, model, x₀, θ₀, T, T_burn, γ, h;
         ad, callback!, show_progress = show_progress,
-        mcmc_type = mcmc_type,
+        mcmc_type    = mcmc_type,
+        n_inner_mcmc = n_inner_mcmc
     )
-    #Plots.plot!(V_hist) |> display
-    #Plots.plot(θ_hist') |> display
-    
     stats_filt = filter(Base.Fix2(haskey, :test_lpd), stats)
-    Plots.plot!([stat.test_lpd for stat in stats_filt]) |> display
+    #Plots.plot!([stat.test_lpd for stat in stats_filt]) |> display
 
     #stats_filt = filter(Base.Fix2(haskey, :loglike), stats)
     #Plots.plot!([stat.loglike for stat in stats_filt]) |> display
@@ -188,7 +196,7 @@ function main(::Val{:rpoisson}, mcmc_type)
         (dataset = :medpar,),
         (dataset = :azpro,),
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, -1.5, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, -1, length=16) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
