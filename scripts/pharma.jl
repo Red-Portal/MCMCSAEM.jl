@@ -134,7 +134,7 @@ function MCMCSAEM.sufficient_statistic(
 end
 
 function MCMCSAEM.preconditioner(model::PharmaNLME, θ::AbstractVector)
-    I
+	I
 end
 
 function MCMCSAEM.maximize_surrogate(model::PharmaNLME, S::AbstractVector)
@@ -220,13 +220,13 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
 
     T_burn    = 100
     T         = 1000
-    γ₀        = 1e-1
+    γ₀        	     = 1e-0
     γ         = t -> γ₀/sqrt(t)
 
     n_inner_mcmc = 4
 
-    θ₀ = [log(1.),log(20),log(0.5),1,1,1,1]
-    #θ₀ = [0.,0.,0.,.1,1,1,1]
+    #θ₀ = [log(1.),log(20),log(0.5),1,1,1,1]
+    θ₀ = [0.,0.,0.,.1,.1,.1,2.0]
     x₀ = sample_prior(rng, model, θ₀, 1)
 
     function callback!(t, x, θ, stat)
@@ -287,22 +287,22 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
     σ_z       = repeat(θ[4:6], inner=n_subject)
     q0        = MvNormal(μ_z, σ_z)
     lml       = MCMCSAEM.ais(
-        rng, test_model, θ, 5e-3, q0, range(0.,1.; length=1000).^2,
+        rng, test_model, θ, 1e-3, q0, range(0.,1.; length=1000).^2,
         100; ad, mcmc_type = :mala, show_progress = show_progress
     )
+	lml  = isfinite(lml) ? lml : nextfloat(typemin(Float32))
     lpd  = lml/test_model.n_subject
-    lpd  = isnan(lpd) ? -Inf : lpd
     DataFrame(rmse=rmse, lpd=lpd, lml=lml)
 end
 
 function main(mcmc_type)
-    n_trials  = 1#32
+    n_trials  = 32
     stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, 0., length=17) ]
     configs   = stepsizes
-
+	
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize = config
-        dfs = @showprogress map(1:n_trials) do key
+        dfs = @showprogress pmap(1:n_trials) do key
             run_problem(Val(:pharma), mcmc_type, stepsize, key, false)
         end
         df = vcat(dfs...)
@@ -311,8 +311,9 @@ function main(mcmc_type)
         end
         df
     end
-
+	
     JLD2.save(datadir("exp_pro", "pharma_$(mcmc_type).jld2"), "data", data)
+    data = JLD2.load(datadir("exp_pro", "pharma_$(mcmc_type).jld2"), "data")
 
     h5open(datadir("exp_pro", "pharma_$(mcmc_type).h5"), "w") do h5
         data′ = @chain groupby(data, :stepsize) begin
@@ -324,6 +325,8 @@ function main(mcmc_type)
         lpd_mean = [lpdᵢ[1] for lpdᵢ ∈ lpd]
         lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
         lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
+
+		println(lpd_p, " ", lpd_m)
 
         write(h5, "h_$(dataset)",    h)
         write(h5, "rmse_$(dataset)", hcat(lpd_mean, lpd_p, lpd_m)' |> Array)
