@@ -133,8 +133,8 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, 1)
 
-    T_burn = 100
-    T      = 1000
+    T_burn = 10
+    T      = 100
     γ₀     = 1e-0
     γ      = t -> γ₀ / sqrt(t)
     m      = 1    # n_chains
@@ -163,12 +163,13 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
         σ = θ[1]
         α = θ[2]
         β = θ[3:end]
-        if mod(t, 10) == 0 || t == 0
-            test_lpd = predictive_loglikelihood(model, X_test, y_test, β, α, σ)
-            (test_lpd = test_lpd,)
-        else
-            NamedTuple()
-        end
+        # if mod(t, 100) == 0 || t == 0
+        #     test_lpd = predictive_loglikelihood(model, X_test, y_test, β, α, σ)
+        #     (test_lpd = test_lpd,)
+        # else
+        #     NamedTuple()
+        # end
+        NamedTuple()
     end
     θ, stats = MCMCSAEM.mcmcsaem(
         rng, model, x₀, θ₀, T, T_burn, γ, h;
@@ -215,7 +216,14 @@ function main(::Val{:rpoisson}, mcmc_type)
     end
 
     JLD2.save(datadir("exp_pro", "robust_poisson_$(mcmc_type)_T=1000.jld2"), "data", data)
+    data = JLD2.load(datadir("exp_pro", "robust_poisson_$(mcmc_type)_T=1000.jld2"), "data")
 
+    for c in eachcol(data)
+        replace!(c, NaN  => nextfloat(typemin(Float32)))
+        replace!(c, Inf  => nextfloat(typemin(Float32)))
+        replace!(c, -Inf => nextfloat(typemin(Float32)))
+    end
+    
     h5open(datadir("exp_pro", "robust_poisson_$(mcmc_type)_T=1000.h5"), "w") do h5
         for dataset ∈ [:medpar, :azpro]
             data′ = data[data[:,:dataset] .== dataset,:]
@@ -228,6 +236,10 @@ function main(::Val{:rpoisson}, mcmc_type)
             lpd_mean = [lpdᵢ[1] for lpdᵢ ∈ lpd]
             lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
             lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
+
+            inf_entries = (lpd_mean .== prevfloat(Inf))
+            lpd_p[inf_entries] .= 0
+            lpd_m[inf_entries] .= 0
 
             write(h5, "h_$(dataset)",   h)
             write(h5, "lpd_$(dataset)", hcat(lpd_mean, lpd_p, lpd_m)' |> Array)
