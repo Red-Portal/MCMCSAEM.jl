@@ -54,7 +54,7 @@ end
 ```
 
 `MCMCSAEM` expects the user to define its own E-step and M-step functions.
-For the E-step (obtaining the sufficient statistic), we only need the first and second moments of $$\beta$$:
+For the E-step (obtaining the sufficient statistic), we only need the first and second moments of $\beta$:
 ```julia
 function MCMCSAEM.sufficient_statistic(::Logistic, x::AbstractMatrix)
     mean(eachcol(x)) do xi
