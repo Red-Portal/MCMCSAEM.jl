@@ -18,10 +18,10 @@ Consider the logistic regression problem
 ```math
 \begin{aligned}
     \beta &\sim \mathcal{N}(\mu \mathbf{I}, \sigma^2 \mathbf{I}) \\
-    y_i   &\sim \operatorname{Bern}(\beta^{\top}x).
+    y_i   &\sim \mathrm{Bern}(\beta^{\top}x).
 \end{aligned}
 ```
-We will show how to infer the hyperparameters $$\mu$$ and $$\sigma$$ through SAEM.
+We will show how to infer the hyperparameters $\mu$ and $\sigma$ through SAEM.
 
 The likelihood itself can be specificed as follows using the [LogDensityProblems](https://github.com/tpapp/LogDensityProblems.jl) interface:
 ```julia
