@@ -1,7 +1,9 @@
 
 module MCMCSAEM
 
+using Accessors
 using ADTypes
+using Base.Iterators
 using DiffResults
 using Distributions
 using FillArrays
@@ -27,5 +29,6 @@ preconditioner(model, θ) = I
 include("gradient.jl")
 include("mcmcsaem.jl")
 include("mcmc.jl")
+include("ais.jl")
 
 end
