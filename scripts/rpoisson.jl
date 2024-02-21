@@ -171,7 +171,7 @@ function run_problem(::Val{:rpoisson}, dataset, mcmc_type, h, key=1, show_progre
         # end
         NamedTuple()
     end
-    θ, stats = MCMCSAEM.mcmcsaem(
+    θ, x, stats = MCMCSAEM.mcmcsaem(
         rng, model, x₀, θ₀, T, T_burn, γ, h;
         ad, callback!, show_progress = show_progress,
         mcmc_type    = mcmc_type,
