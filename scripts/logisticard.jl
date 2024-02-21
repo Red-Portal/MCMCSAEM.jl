@@ -35,7 +35,7 @@ end
 
 function MCMCSAEM.preconditioner(::LogisticARD, θ::AbstractVector)
     ϵ = eps(eltype(θ))
-    Diagonal(vcat([1.0], @. 1 / (θ^2 + ϵ) + 1e-3))
+    Diagonal(vcat([1.0], @. 1 / (θ^2 + 0.01) + ϵ))
 end
 
 function MCMCSAEM.sufficient_statistic(::LogisticARD, x::AbstractMatrix)
@@ -45,7 +45,7 @@ function MCMCSAEM.sufficient_statistic(::LogisticARD, x::AbstractMatrix)
 end
 
 function MCMCSAEM.maximize_surrogate(::LogisticARD, S::AbstractVector)
-    ϵ   = eps(eltype(S))
+    ϵ   = sqrt(eps(eltype(S)))
     EX² = S
     σ   = sqrt.(EX²) 
     @. 1 ./ (σ + ϵ) + ϵ
@@ -96,26 +96,12 @@ end
 
 function load_dataset(::Val{:sonar})
     data = readdlm(datadir("dataset", "sonar data.csv"), ',')
-    y    = Vector(data[:,end] .== 'M')
+    y    = Vector(data[:,end] .== "M")
     X    = Matrix{Float64}(data[:,1:end-1])
 
     X .-= mean(X, dims=1)
     X ./= std(X, dims=1)
 
-    X, y
-end
-
-function load_dataset(::Val{:mushroom})
-    data = readdlm(datadir("dataset", "agaricus-lepiota.data"), ',')
-    y    = data[:,1] .== 'e'
-    X    = data[:,2:end]
-
-    df = DataFrame(X, :auto)
-    for col ∈ [Symbol("x$(idx)") for idx ∈ 1:22]
-        df = onehot(df, col, outname = col)
-        df = select(df, Not(col))
-    end
-    X = Array{Int}(df)
     X, y
 end
 
@@ -130,16 +116,9 @@ function load_dataset(::Val{:breast})
     X, y
 end
 
-function load_dataset(::Val{:ionosphere})
-    data = readdlm(datadir("dataset", "ionosphere.csv"), ',')
-    y    = Vector(data[:,end] .== 1.0)
-    X    = Matrix{Float64}(data[:,1:end-1])
-    X, y
-end
-
 function load_dataset(::Val{:caravan})
     data, _ = readdlm(datadir("dataset", "caravan.csv"), ',', header=true)
-    y       = Vector(data[:,end] .== "g")
+    y       = Vector(data[:,end] .== 1.0)
     X       = Matrix{Float64}(data[:,2:end-1])
 
     df = DataFrame(X, :auto)
@@ -203,8 +182,9 @@ end
 
 function run_lasso_all()
     run_lasso_dataset(Val(:german))
-    run_lasso_dataset(Val(:heart))
-    run_lasso_dataset(Val(:mushroom))
+    run_lasso_dataset(Val(:sonar))
+    run_lasso_dataset(Val(:phishing))
+    run_lasso_dataset(Val(:caravan))
 end
 
 function predictive_loglikelihood(::LogisticARD, X, y, β_post)
@@ -231,8 +211,8 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
 
     d = size(X_train, 2)
 
-    T_burn    = 1000
-    T         = 20000
+    T_burn    = 100
+    T         = 2000
     γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
     m         = 1    # n_chains
@@ -240,18 +220,21 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
     n_inner_mcmc = 4
 
     model = LogisticARD(X_train, y_train)
-    θ₀    = fill(2.0, d)
+    θ₀    = fill(1.0, d)
     β     = rand(rng, MvNormal(Zeros(d), 1 ./ θ₀))
     α     = [0.0]
     x₀    = reshape(repeat(vcat(α, β), outer=m), (:,m))
 
-    θ, stats = MCMCSAEM.mcmcsaem(rng, model, x₀, θ₀, T, T_burn, γ, h;
-                                 ad, show_progress, mcmc_type,
-                                 n_inner_mcmc=n_inner_mcmc)
+    θ, x, _ = MCMCSAEM.mcmcsaem(
+        rng, model, x₀, θ₀, T, T_burn, γ, h;
+        ad, show_progress, mcmc_type,
+        n_inner_mcmc=n_inner_mcmc
+    )
+
     #stats_loglike = filter(Base.Fix2(haskey, :loglike), stats)
     #Plots.plot([stat.loglike for stat in stats_loglike]) |> display
 
-    β_post = MCMCSAEM.mcmc(rng, model, θ, x₀, 1e-3, 5000; ad, show_progress)
+    β_post = MCMCSAEM.mcmc(rng, model, θ, x[:,1], 1e-3, 4000; ad, show_progress)
     X_test = hcat(ones(size(X_test,1)), X_test)
 
     lpd = predictive_loglikelihood(model, X_test, y_test, β_post)
@@ -259,20 +242,20 @@ function run_problem(::Val{:logisticard}, dataset, mcmc_type, h, key=1, show_pro
 
     GC.gc()
 
+    lpd = isfinite(lpd) ? lpd : -1000.0
+    acc = isfinite(acc) ? acc : 0.0
+
     DataFrame(lpd=lpd, acc=acc)
 end
 
 function main(::Val{:logisticard}, mcmc_type)
-    #@everywhere run(`taskset -pc $(myid() - 1) $(getpid())`)
-
     n_trials = 32
     datasets = [
-        (dataset = :mushroom,),
-        (dataset = :sonar,),
-        (dataset = :caravan,),
+        (dataset = :german,),
         (dataset = :phishing,),
+        (dataset = :caravan,),
     ]
-    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, 0, length=11) ]
+    stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-5, -2, length=16) ]
 
     configs = Iterators.product(datasets, stepsizes) |> collect
     configs = reshape(configs, :)
@@ -291,9 +274,10 @@ function main(::Val{:logisticard}, mcmc_type)
     end
 
     JLD2.save(datadir("exp_pro", "logisticard_$(mcmc_type).jld2"), "data", data)
+    data = JLD2.load(datadir("exp_pro", "logisticard_$(mcmc_type).jld2"), "data")
 
     h5open(datadir("exp_pro", "logisticard_$(mcmc_type).h5"), "w") do h5
-        for dataset ∈ [:mushroom, :sonar, :caravan, :phishing]
+        for dataset ∈ [:german, :phishing, :caravan]
             data′ = data[data[:,:dataset] .== dataset,:]
             data′′ = @chain groupby(data′, :stepsize) begin
                 @combine(:lpd_ci   = run_bootstrap(:lpd))
