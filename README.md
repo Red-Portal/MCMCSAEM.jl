@@ -108,7 +108,7 @@ function main()
     θ0    = [0.0, 5.0]
     x0    = randn(rng, d, 1)
 
-    θ, stats = MCMCSAEM.mcmcsaem(
+    θ, x, stats = MCMCSAEM.mcmcsaem(
         rng, model, x0, θ0, T, T_burn, γ, h;
         ad, 
         show_progress = true, 

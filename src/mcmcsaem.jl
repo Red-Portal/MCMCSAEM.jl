@@ -55,5 +55,5 @@ function mcmcsaem(
         stats[t+T_burn] = stat
         pm_next!(prog, stat)
     end
-    θ, stats
+    θ, x, stats
 end

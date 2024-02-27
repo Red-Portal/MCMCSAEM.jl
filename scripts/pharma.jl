@@ -134,7 +134,7 @@ function MCMCSAEM.sufficient_statistic(
 end
 
 function MCMCSAEM.preconditioner(model::PharmaNLME, θ::AbstractVector)
-	I
+        I
 end
 
 function MCMCSAEM.maximize_surrogate(model::PharmaNLME, S::AbstractVector)
@@ -220,7 +220,7 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
 
     T_burn    = 100
     T         = 1000
-    γ₀        	     = 1e-0
+    γ₀               = 1e-0
     γ         = t -> γ₀/sqrt(t)
 
     n_inner_mcmc = 4
@@ -263,7 +263,7 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
         end
     end
 
-    θ, stats = MCMCSAEM.mcmcsaem(
+    θ, x, stats = MCMCSAEM.mcmcsaem(
         rng, model, x₀, θ₀, T, T_burn, γ, h;
         ad, callback! = callback!,
         show_progress = show_progress,
@@ -290,7 +290,7 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
         rng, test_model, θ, 1e-3, q0, range(0.,1.; length=1000).^2,
         100; ad, mcmc_type = :mala, show_progress = show_progress
     )
-	lml  = isfinite(lml) ? lml : nextfloat(typemin(Float32))
+    lml  = isfinite(lml) ? lml : nextfloat(typemin(Float32))
     lpd  = lml/test_model.n_subject
     DataFrame(rmse=rmse, lpd=lpd, lml=lml)
 end
@@ -299,7 +299,7 @@ function main(mcmc_type)
     n_trials  = 32
     stepsizes = [(stepsize = 10.0.^logstepsize,) for logstepsize ∈ range(-4, 0., length=17) ]
     configs   = stepsizes
-	
+        
     data = @showprogress mapreduce(vcat, configs) do config
         SimpleUnPack.@unpack stepsize = config
         dfs = @showprogress pmap(1:n_trials) do key
@@ -311,7 +311,7 @@ function main(mcmc_type)
         end
         df
     end
-	
+        
     JLD2.save(datadir("exp_pro", "pharma_$(mcmc_type).jld2"), "data", data)
     data = JLD2.load(datadir("exp_pro", "pharma_$(mcmc_type).jld2"), "data")
 
@@ -326,7 +326,7 @@ function main(mcmc_type)
         lpd_p    = [abs(lpdᵢ[2] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
         lpd_m    = [abs(lpdᵢ[3] - lpdᵢ[1]) for lpdᵢ ∈ lpd]
 
-		println(lpd_p, " ", lpd_m)
+                println(lpd_p, " ", lpd_m)
 
         write(h5, "h_$(dataset)",    h)
         write(h5, "rmse_$(dataset)", hcat(lpd_mean, lpd_p, lpd_m)' |> Array)
