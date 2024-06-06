@@ -8,7 +8,7 @@ function ais(
     q0,
     schedule ::AbstractVector,
     n_samples::Int;
-    ad       ::ADTypes.AbstractADType = ADTypes.AutoZygote,
+    ad       ::ADTypes.AbstractADType = ADTypes.AutoZygote(),
     mcmc_type::Symbol = :ula,
     mcmc_steps::Int   = 4,
     show_progress     = true,
