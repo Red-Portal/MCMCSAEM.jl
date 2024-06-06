@@ -24,37 +24,47 @@ function LogDensityProblems.logdensity(
     ℓp_x + ℓp_β
 end
 
-function MCMCSAEM.sufficient_statistic(::Logistic, x::AbstractMatrix)
+function MCMCSAEM.sufficient_statistic(
+    ::Logistic, x::AbstractMatrix, θ::AbstractVector
+)
+    μ = θ[1]
     mean(eachcol(x)) do xᵢ
-        vcat(xᵢ, xᵢ.^2)
+        [mean(xᵢ), mean(abs2, xᵢ .- μ)]
     end
 end
 
 function MCMCSAEM.maximize_surrogate(::Logistic, S::AbstractVector)
-    d   = div(length(S), 2)
-    EX  = S[1:d]
-    EX² = S[d+1:end]
-    μ   = mean(EX)
-    [μ, sqrt(mean(EX²) - μ^2)]
+    μ, σ2 = S[1], S[2]
+    [μ, sqrt(σ2)]
+end
+
+function MCMCSAEM.preconditioner(model::Logistic, θ::AbstractVector)
+    I
 end
 
 function run_problem(::Val{:logistic}, mcmc_type, h, key=1, show_progress=false)
     seed = (0x38bef07cf9cc549d, 0x49e2430080b3f797)
-    ad   = ADTypes.AutoForwardDiff()
+    ad   = ADTypes.AutoReverseDiff()
 
     rng  = Philox4x(UInt64, seed, 8)
     set_counter!(rng, 1)
 
-    T      = 5000
-    T_burn = 100
+    T      = 100
+    T_burn = 10
     γ₀     = 1e-0
     γ      = t -> γ₀ / sqrt(t)
     m      = 1    # n_chains
-    n      = 500  # n_datapoints
-    d      = 30   # n_regressors
-    X      = randn(rng, n, d)
-    
-    θ_true   = [-0.5, 0.2]
+    n      = 1000 # n_datapoints
+    d      = 100  # n_regressors
+
+    κ        = 1000
+    L        = 100
+    X        = randn(rng, n, d)
+    U, _, Vt = svd(X)
+    D        = Diagonal(range(L, L/sqrt(κ); length=min(n, d)))
+    X        = U*D*Vt
+
+    θ_true   = [1.0, 0.1]
     β_true   = rand(rng, Normal(θ_true[1], θ_true[2]), d)
     y        = rand.(rng, BernoulliLogit.(X*β_true))
 
@@ -62,7 +72,7 @@ function run_problem(::Val{:logistic}, mcmc_type, h, key=1, show_progress=false)
     set_counter!(rng, key)
 
     model = Logistic(X, y)
-    θ₀    = [0.0, 5.0]
+    θ₀    = [0.0, 1.0]
     x₀    = randn(rng, d, m)
 
     θ_hist = zeros(length(θ₀), T)
@@ -75,6 +85,7 @@ function run_problem(::Val{:logistic}, mcmc_type, h, key=1, show_progress=false)
         rng, model, x₀, θ₀, T, T_burn, γ, h;
         ad, callback!, show_progress = show_progress,
         mcmc_type = mcmc_type,
+        n_inner_mcmc = 4,
     )
 
     Plots.plot(θ_hist', xlabel="SAEM Iteration", ylabel="Value") |> display
