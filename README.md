@@ -56,9 +56,12 @@ end
 `MCMCSAEM` expects the user to define its own E-step and M-step functions.
 For the E-step (obtaining the sufficient statistic), we only need the first and second moments of $\beta$:
 ```julia
-function MCMCSAEM.sufficient_statistic(::Logistic, x::AbstractMatrix)
+function MCMCSAEM.sufficient_statistic(
+	::Logistic, x::AbstractMatrix, θ::AbstractVector
+)
+ 	μ = θ[1]
     mean(eachcol(x)) do xi
-        vcat(xi, xi.^2)
+        vcat(xi, (xi .- μ).^2)
     end
 end
 ```
@@ -66,11 +69,11 @@ end
 The M-step receives the estimated sufficient statistic and returns the hyperparameters maximizing the EM surrogate. (Refer to the paper for more details.)
 ```julia
 function MCMCSAEM.maximize_surrogate(::Logistic, S::AbstractVector)
-    d   = div(length(S), 2)
-    EX  = S[1:d]
-    EX² = S[d+1:end]
-    μ   = mean(EX)
-    [μ, sqrt(mean(EX²) - μ^2)]
+    d  = div(length(S), 2)
+    X  = S[1:d]
+    X² = S[d+1:end]
+    μ  = mean(X)
+    [μ, sqrt(mean(X²))]
 end
 ```
 
@@ -84,7 +87,7 @@ function main()
     rng = Random.default_rng()
 
     # SAEM Settings
-    T         = 50               # Number of SAEM iterations
+    T         = 100               # Number of SAEM iterations
     T_burn    = 5                # Number of initial burn-in steps
     γ0        = 1e-0              # Base stepsize
     γ         = t -> γ0 / sqrt(t) # Stepsize schedule
