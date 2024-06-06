@@ -61,7 +61,7 @@ function MCMCSAEM.sufficient_statistic(
 )
  	μ = θ[1]
     mean(eachcol(x)) do xi
-        vcat(xi, (xi .- μ).^2)
+        [mean(xi), mean(abs2, xi .- μ)]
     end
 end
 ```
@@ -70,10 +70,9 @@ The M-step receives the estimated sufficient statistic and returns the hyperpara
 ```julia
 function MCMCSAEM.maximize_surrogate(::Logistic, S::AbstractVector)
     d  = div(length(S), 2)
-    X  = S[1:d]
-    X² = S[d+1:end]
-    μ  = mean(X)
-    [μ, sqrt(mean(X²))]
+    μ  = S[1]
+    σ2 = S[2]
+    [μ, sqrt(σ2)]
 end
 ```
 
