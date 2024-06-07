@@ -9,6 +9,7 @@ using Distributions
 using FillArrays
 using LinearAlgebra
 using LogDensityProblems
+using LogExpFunctions
 using ProgressMeter
 using Random
 using Statistics
