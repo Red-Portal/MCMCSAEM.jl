@@ -220,7 +220,7 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
 
     T_burn    = 100
     T         = 1000
-    γ₀               = 1e-0
+    γ₀        = 1e-0
     γ         = t -> γ₀/sqrt(t)
 
     n_inner_mcmc = 4

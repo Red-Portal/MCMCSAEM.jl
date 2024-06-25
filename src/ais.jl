@@ -27,7 +27,7 @@ function ais(
 
     hist = zeros(n_samples, length(schedule))
 
-    mean(1:n_samples) do i
+    logws = map(1:n_samples) do i
         logw      = 0.0
         x         = rand(rng, q0)
         tempered  = Accessors.@set model.temp = first(schedule)
@@ -58,4 +58,5 @@ function ais(
         end
         logw
     end
+    logsumexp(logws) - log(length(logws))
 end
