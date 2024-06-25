@@ -128,3 +128,4 @@ We can see the log joint going up as we converge:
 
 ## Experiments in the Paper
 The experiments in the paper can be replicated by executing the scripts in `scripts/`.
+For the datasets, please leave an issue and we'll send you a copy.

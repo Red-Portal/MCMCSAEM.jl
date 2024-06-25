@@ -154,9 +154,9 @@ function MCMCSAEM.maximize_surrogate(model::PharmaNLME, S::AbstractVector)
 end
 
 function load_dataset(rng::Random.AbstractRNG, ::Val{:pharma})
-    data   = readdlm(datadir("theophylline_saemix.csv"), ',', Any, '\n')
-    data   = DataFrame(identity.(data), ["Subject", "Dose", "Time", "Conc", "Wt", "Sex"])
-    groups = groupby(data, :Subject)
+    data, _ = readdlm(datadir("theophylline_saemix.csv"), ' ', Any, '\n', header=true)
+    data    = DataFrame(identity.(data), ["Subject", "Dose", "Time", "Conc", "Wt", "Sex"])
+    groups  = groupby(data, :Subject)
 
     t       = [Array{Float64}(group.Time) for group in groups]
     y       = [Array{Float64}(group.Conc) for group in groups]
@@ -245,7 +245,7 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
             a          = a
          )
 
-        if mod(t, 100) == 0 
+        if mod(t, 1) == 0 
             vol = exp(μ_ℓvol)
             ka  = exp(μ_ℓka)
             clr = exp(μ_ℓclr)
@@ -272,8 +272,8 @@ function run_problem(::Val{:pharma}, mcmc_type, h, key = 1, show_progress=true)
     )
     stats_rmse = filter(Base.Fix2(haskey, :rmse_train), stats)
     if show_progress
-        Plots.plot( [stat.rmse_train for stat in stats_rmse]) |> display
-        Plots.plot!([stat.rmse_test  for stat in stats_rmse]) |> display
+        Plots.plot( [stat.rmse_train for stat in stats_rmse], xlabel="SAEM Iteration", ylabel="RMSE", label="Train RMSE") |> display
+        Plots.plot!([stat.rmse_test  for stat in stats_rmse], xlabel="SAEM Iteration", ylabel="RMSE", label="Test RMSE") |> display
     end
     rmse = last([stat.rmse_test  for stat in stats_rmse])
     rmse = isnan(rmse) ? 10 : rmse
