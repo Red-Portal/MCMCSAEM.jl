@@ -154,7 +154,7 @@ function MCMCSAEM.maximize_surrogate(model::PharmaNLME, S::AbstractVector)
 end
 
 function load_dataset(rng::Random.AbstractRNG, ::Val{:pharma})
-    data, _ = readdlm(datadir("theophylline_saemix.csv"), ' ', Any, '\n', header=true)
+    data, _ = readdlm(datadir("dataset", "theophylline_saemix.csv"), ' ', Any, '\n', header=true)
     data    = DataFrame(identity.(data), ["Subject", "Dose", "Time", "Conc", "Wt", "Sex"])
     groups  = groupby(data, :Subject)
 
